@@ -1,4 +1,3 @@
-
 /**
  * SERVE THE WEB APP
  */
@@ -14,6 +13,7 @@ function doGet(e) {
  * AUTHENTICATE USER
  * Checks credentials against 'userData' sheet.
  * User ID is case-insensitive, Password is case-sensitive.
+ * Admin = Full Name "Olusegun Kehinde"
  */
 function loginUser(userId, password) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -30,7 +30,7 @@ function loginUser(userId, password) {
 
   for (var i = 1; i < data.length; i++) {
     var dbUser = String(data[i][idCol]).trim().toLowerCase();
-    var dbPass = String(data[i][passCol]).trim(); // Kept case-sensitive
+    var dbPass = String(data[i][passCol]).trim();
     var dbName = String(data[i][nameCol]).trim();
 
     if (dbUser === searchId && dbPass === String(password)) {
@@ -39,7 +39,7 @@ function loginUser(userId, password) {
       return {
         success: true,
         user: {
-          id: String(data[i][idCol]).trim(), // Return original casing for records
+          id: String(data[i][idCol]).trim(),
           name: dbName,
           role: isAdmin ? 'admin' : 'standard'
         }
@@ -49,7 +49,6 @@ function loginUser(userId, password) {
 
   return { success: false, message: "Invalid User ID or Password." };
 }
-
 
 /**
  * Finds sheet header indexes by any accepted header name.
@@ -173,17 +172,33 @@ function searchEmployees(query, limit) {
 
 /**
  * Helper to get all Employee IDs for the datalist (autocomplete)
+ * Uses live sheet name tblEmployee and Emp ID column.
  */
 function getEmployeeIds() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('tblemployee');
-  return sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues().flat();
+  var sheet = ss.getSheetByName('tblEmployee') || ss.getSheetByName('tblemployee');
+  if (!sheet) return [];
+  var data = sheet.getDataRange().getValues();
+  if (data.length < 2) return [];
+  var headers = data[0].map(function(h) { return String(h).trim(); });
+  var idIdx = getHeaderIndex_(headers, ["Emp ID", "Employee ID", "Emp No"]);
+  if (idIdx === -1) return [];
+  var ids = [];
+  for (var i = 1; i < data.length; i++) {
+    var id = String(data[i][idIdx]).trim();
+    if (id) ids.push(id);
+  }
+  return ids;
 }
 
 /**
  * Processes and appends a new leave entry into tblLeave.
- * @param {Object} formData - The data collected from the frontend.
- * @param {Object} userSession - The currently logged-in user object.
+ * Maps exactly to live sheet headers:
+ * Entry Code, Leave Code, Emp ID, Emp Name, Department, Category, Leave Type,
+ * Start Date, End Date, Leave Reason, No of Days, Leave Utilized, Entitlement Year,
+ * Date Entered, Entered By, Date Modified, Modified By, BU, DB Remark, Upload Date, Uploaded By
+ *
+ * Leave Code is looked up from Sys_LeavePolicies."DB Leave Code" by Leave Type.
  */
 function submitLeaveRequest(formData, userSession) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -195,10 +210,8 @@ function submitLeaveRequest(formData, userSession) {
   var leaveData = tblLeave.getDataRange().getValues();
   var headers = leaveData[0].map(function(h) { return String(h).trim(); });
 
-  // ==========================================
   // 1. GENERATE USER INITIALS
-  // ==========================================
-  var nameParts = String(userSession.name).trim().split(' ');
+  var nameParts = String(userSession.name).trim().split(/\s+/);
   var initials = "";
   if (nameParts.length >= 2) {
     initials = (nameParts[0].charAt(0) + nameParts[1].charAt(0)).toUpperCase();
@@ -208,16 +221,12 @@ function submitLeaveRequest(formData, userSession) {
     initials = "XX";
   }
 
-  // ==========================================
-  // 2. CALCULATE NEXT SERIAL NUMBER
-  // ==========================================
+  // 2. CALCULATE NEXT SERIAL NUMBER (ignore DB- prefixed codes)
   var entryCodeIdx = headers.indexOf("Entry Code");
   var maxSerial = 0;
 
   for (var i = 1; i < leaveData.length; i++) {
     var code = String(leaveData[i][entryCodeIdx]).trim();
-    // Regex matches uppercase letters followed by a hyphen and numbers (e.g., OK-1025)
-    // This safely ignores DB entry codes if their format differs entirely
     var match = code.match(/^[A-Z]+-(\d+)$/);
     if (match) {
       var num = parseInt(match[1], 10);
@@ -228,58 +237,49 @@ function submitLeaveRequest(formData, userSession) {
   var nextSerial = maxSerial === 0 ? 1000 : maxSerial + 1;
   var newEntryCode = initials + "-" + nextSerial;
 
-  // ==========================================
-  // 3. FETCH LEAVE CODE FROM POLICY
-  // ==========================================
-  var pData = policySheet.getDataRange().getValues();
-  var pHeaders = pData[0].map(function(h) { return String(h).trim(); });
-  var pTypeIdx = pHeaders.indexOf("Leave Type");
-  var pCodeIdx = pHeaders.indexOf("Leave Code");
-
+  // 3. FETCH LEAVE CODE FROM POLICY (live header is "DB Leave Code")
   var sysLeaveCode = "";
-  for (var p = 1; p < pData.length; p++) {
-    if (String(pData[p][pTypeIdx]).trim() === formData.leaveType) {
-      sysLeaveCode = pData[p][pCodeIdx];
-      break;
+  if (policySheet) {
+    var pData = policySheet.getDataRange().getValues();
+    var pHeaders = pData[0].map(function(h) { return String(h).trim(); });
+    var pTypeIdx = pHeaders.indexOf("Leave Type");
+    var pCodeIdx = pHeaders.indexOf("DB Leave Code");
+    if (pCodeIdx === -1) pCodeIdx = pHeaders.indexOf("Leave Code");
+
+    for (var p = 1; p < pData.length; p++) {
+      if (String(pData[p][pTypeIdx]).trim() === formData.leaveType) {
+        sysLeaveCode = pCodeIdx !== -1 ? String(pData[p][pCodeIdx]).trim() : "";
+        break;
+      }
     }
   }
 
-  // ==========================================
   // 4. DATE AND UTILIZATION CALCULATIONS
-  // ==========================================
   var sDate = new Date(formData.startDate);
   var eDate = new Date(formData.endDate);
 
-  // Actual calendar days
   var noOfDays = Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
   var entitlementYear = sDate.getFullYear();
 
-  // Hook into your granular shift calculator for Leave Utilized.
-  // We wrap this in a try/catch block just in case the backend engine fails during calculation.
   var utilized = 0;
   try {
     utilized = calculateLeaveUtilize(formData.empId, sDate, eDate);
-  } catch(e) {
-    utilized = noOfDays; // Fallback to raw days if script errors out
+  } catch (e) {
+    utilized = noOfDays;
   }
 
-  // Prevent submission if utilized exceeds balance
-  // (Frontend handles UI block, this is strict backend security)
   if (utilized > formData.availableBalance) {
     return { success: false, message: "Rejected: Required leave days (" + utilized + ") exceeds available balance." };
   }
 
-  // ==========================================
-  // 5. BUILD AND APPEND RECORD
-  // ==========================================
+  // 5. BUILD AND APPEND RECORD — keys must match live tblLeave headers exactly
   var rowObj = {
     "Entry Code": newEntryCode,
     "Leave Code": sysLeaveCode,
     "Emp ID": formData.empId,
     "Emp Name": formData.empName,
-    "Dept": formData.dept,
+    "Department": formData.dept,
     "Category": formData.category,
-    "BU": formData.bu,
     "Leave Type": formData.leaveType,
     "Start Date": sDate,
     "End Date": eDate,
@@ -287,16 +287,16 @@ function submitLeaveRequest(formData, userSession) {
     "No of Days": noOfDays,
     "Leave Utilized": utilized,
     "Entitlement Year": entitlementYear,
-    "Date Entered": new Date(), // Enforces immediate system timestamp
+    "Date Entered": new Date(),
     "Entered By": userSession.name,
     "Date Modified": "",
     "Modified By": "",
+    "BU": formData.bu,
     "DB Remark": "Not Uploaded",
     "Upload Date": "",
-    "Upload By": ""
+    "Uploaded By": ""
   };
 
-  // Map properties exactly to the column layout of tblLeave
   var rowToAppend = headers.map(function(h) {
     var field = rowObj[h];
     return field !== undefined ? field : "";
@@ -341,7 +341,6 @@ function getEmployeeLeaveHistory(empId) {
     }
   }
 
-  // Sort descending by Start Date (Most recent first)
   history.sort(function(a, b) {
     return new Date(b.startDate) - new Date(a.startDate);
   });
@@ -360,18 +359,16 @@ function updateLeaveRecord(updateData, userSession) {
   var headers = data[0].map(function(h) { return String(h).trim(); });
   var entryCodeIdx = headers.indexOf("Entry Code");
 
-  // Find the exact row using Entry Code
   var targetRowIdx = -1;
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][entryCodeIdx]).trim() === updateData.entryCode) {
-      targetRowIdx = i + 1; // +1 because array is 0-indexed and sheet is 1-indexed
+      targetRowIdx = i + 1;
       break;
     }
   }
 
   if (targetRowIdx === -1) return { success: false, message: "Record not found." };
 
-  // Recalculate days and utilization based on new dates
   var sDate = new Date(updateData.startDate);
   var eDate = new Date(updateData.endDate);
   var noOfDays = Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
@@ -379,19 +376,18 @@ function updateLeaveRecord(updateData, userSession) {
   var utilized = 0;
   try {
     utilized = calculateLeaveUtilize(updateData.empId, sDate, eDate);
-  } catch(e) {
+  } catch (e) {
     utilized = noOfDays;
   }
 
-  // Perform updates mapping to exact columns
   var updates = [
     { col: "Start Date", val: sDate },
     { col: "End Date", val: eDate },
     { col: "Leave Reason", val: updateData.leaveReason },
     { col: "No of Days", val: noOfDays },
     { col: "Leave Utilized", val: utilized },
-    { col: "Date Modified", val: new Date() }, // Dynamic modification timestamp
-    { col: "Modified By", val: userSession.name } // Logs the logged-in user
+    { col: "Date Modified", val: new Date() },
+    { col: "Modified By", val: userSession.name }
   ];
 
   updates.forEach(function(u) {
