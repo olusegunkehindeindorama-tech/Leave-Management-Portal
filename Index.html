@@ -1,0 +1,565 @@
+
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        --primary: #4F46E5; 
+        --secondary: #06B6D4; 
+        --sidebar: #1E293B;
+        --sidebar-hover: #334155;
+        --light: #F1F5F9;
+        --dark: #0F172A;
+        --danger: #EF4444;
+      }
+      
+      body {
+        font-family: 'Inter', sans-serif;
+        margin: 0; padding: 0;
+        background: var(--light);
+        height: 100vh;
+        color: var(--dark);
+        overflow: hidden; /* Prevent body scroll */
+      }
+
+      /* View Controller */
+      .view { display: none; width: 100%; height: 100%; }
+      .view.active { display: flex; }
+
+      /* --- LOGIN STYLES --- */
+      #loginView {
+        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+        justify-content: center; align-items: center;
+      }
+      .login-card {
+        background: white; padding: 40px; border-radius: 16px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.2); width: 350px; text-align: center;
+      }
+      .login-card h2 { margin-top: 0; color: var(--primary); }
+      .input-group { margin-bottom: 20px; text-align: left; }
+      .input-group label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 5px; }
+      .input-group input { 
+        width: 100%; padding: 10px; border: 1px solid #CBD5E1; 
+        border-radius: 8px; box-sizing: border-box; font-family: 'Inter';
+      }
+      .btn {
+        background: var(--primary); color: white; border: none; padding: 12px;
+        width: 100%; border-radius: 8px; font-weight: bold; cursor: pointer;
+        transition: background 0.3s;
+      }
+      .btn:hover { background: #4338CA; }
+      .error-msg { color: var(--danger); font-size: 13px; margin-bottom: 15px; display: none; }
+      .support-text { font-size: 12px; color: #64748B; margin-top: 20px; }
+
+      /* --- DASHBOARD STYLES (SIDEBAR LAYOUT) --- */
+      #appView { flex-direction: row; }
+      
+      .sidebar {
+        width: 260px; background: var(--sidebar); color: white;
+        display: flex; flex-direction: column; box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+      }
+      .sidebar-header {
+        padding: 25px 20px; border-bottom: 1px solid #334155;
+      }
+      .sidebar-header h2 { margin: 0; font-size: 18px; color: var(--light); }
+      
+      .menu { flex-grow: 1; padding: 20px 0; }
+      .menu-item {
+        padding: 15px 25px; cursor: pointer; display: flex; align-items: center;
+        color: #94A3B8; font-weight: 600; transition: all 0.2s;
+      }
+      .menu-item:hover, .menu-item.active {
+        background: var(--sidebar-hover); color: white; border-left: 4px solid var(--primary);
+      }
+      .menu-item[data-target="adminModule"] { display: none; /* Hidden by default */ }
+      
+      .user-profile {
+        padding: 20px; border-top: 1px solid #334155; font-size: 14px;
+      }
+      .user-name { font-weight: bold; color: white; margin-bottom: 5px; }
+      .admin-badge { background: var(--primary); color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 5px; }
+      .logout-btn { color: #FCA5A5; cursor: pointer; font-weight: 600; margin-top: 10px; display: inline-block; }
+      .logout-btn:hover { color: var(--danger); }
+
+      /* Main Content Area */
+      .main-content {
+        flex-grow: 1; padding: 40px; background: var(--light);
+        overflow-y: auto;
+      }
+      .module { display: none; }
+      .module.active { display: block; }
+      
+      /* Basic Module Styling */
+      .card {
+        background: white; border-radius: 12px; padding: 25px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+      }
+      h1 { margin-top: 0; color: var(--dark); font-size: 24px; }
+    </style>
+  </head>
+<div id="editModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+  <div class="card" style="width: 400px; position: relative;">
+    <h3 style="margin-top:0; color:var(--primary);">Edit Leave Record</h3>
+    <p><strong>Code:</strong> <span id="editEntryCode"></span></p>
+    
+    <div style="display:flex; gap:15px; margin-top:15px;">
+      <div class="input-group"><label>Start Date</label><input type="date" id="editStartDate"></div>
+      <div class="input-group"><label>End Date</label><input type="date" id="editEndDate"></div>
+    </div>
+    
+    <div class="input-group" style="margin-top:10px;">
+      <label>Leave Reason</label>
+      <textarea id="editLeaveReason" rows="3" style="width:100%;"></textarea>
+    </div>
+    
+    <div style="display:flex; gap:10px; margin-top:20px;">
+      <button class="btn" onclick="submitEdit()" id="saveEditBtn">Save Changes</button>
+      <button class="btn" style="background:#64748B;" onclick="closeEditModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+  <body>
+
+    <!-- 1. LOGIN VIEW -->
+    <div id="loginView" class="view active">
+      <div class="login-card">
+        <h2>Leave Management</h2>
+        <p style="color: #64748B; font-size: 14px; margin-bottom: 25px;">Sign in to continue</p>
+        <div id="loginError" class="error-msg"></div>
+        <div class="input-group">
+          <label>User ID</label>
+          <input type="text" id="userId" placeholder="Enter your ID">
+        </div>
+        <div class="input-group">
+          <label>Password</label>
+          <input type="password" id="password" placeholder="Enter your password">
+        </div>
+        <button class="btn" onclick="attemptLogin()" id="loginBtn">Log In</button>
+        <div class="support-text">
+          Forgot your password?<br>
+          Please contact <b>Mr. Olusegun Kehinde</b> for password reset.
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. MAIN APP DASHBOARD -->
+    <div id="appView" class="view">
+      
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+          <h2>Leave Management</h2>
+        </div>
+        <div class="menu">
+          <div class="menu-item active" data-target="leaveEntryModule" onclick="switchModule(this)">📝 Leave Entry</div>
+          <div class="menu-item" data-target="reportsModule" onclick="switchModule(this)">📊 Reports & Balances</div>
+          <div class="menu-item" data-target="shiftModule" onclick="switchModule(this)">📅 Shift Roster</div>
+          <!-- Admin Only Menu Item -->
+          <div class="menu-item" id="adminMenuBtn" data-target="adminModule" onclick="switchModule(this)">⚙️ Admin Hub (DB Sync)</div>
+        </div>
+        <div class="user-profile">
+          <div class="user-name"><span id="displayUserName">Loading...</span><span id="adminBadge" class="admin-badge" style="display:none;">ADMIN</span></div>
+          <div class="logout-btn" onclick="logout()">Logout</div>
+        </div>
+      </div>
+
+      <!-- Main Content Area -->
+      <div class="main-content">
+        
+        <!-- Leave Entry Module -->
+        <div id="leaveEntryModule" class="module active">
+          <h1>Leave Entry</h1>
+          <div class="card">
+            <p>The dynamic form for entering leave records will go here.</p>
+            <!-- ADD TO: #leaveEntryModule in Index.html -->
+<div class="card">
+  <h3>New Leave Request</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+    <!-- Emp ID Input with Datalist -->
+    <div class="input-group">
+      <label>Employee ID</label>
+      <input type="text" id="formEmpId" list="empList" onchange="fetchEmployeeDetails()" placeholder="Start typing ID...">
+      <datalist id="empList"></datalist>
+    </div>
+  </div>
+
+  <!-- Dynamic Details Display (Hidden by default) -->
+  <div id="employeeDisplay" style="display:none; margin-top:20px; background:#f8fafc; padding:15px; border-radius:8px;">
+    <p><strong>Name:</strong> <span id="dispName"></span> | <strong>Dept:</strong> <span id="dispDept"></span></p>
+    <p><strong>BU:</strong> <span id="dispBU"></span> | <strong>Category:</strong> <span id="dispCat"></span></p>
+    <hr>
+    <div id="balanceTable"></div>
+    
+    <div style="margin-top:20px;">
+      <label>Leave Type</label>
+      <select id="leaveTypeSelect"></select>
+      
+      <div style="display:flex; gap:15px; margin-top:10px;">
+        <div class="input-group"><label>Start Date</label><input type="date" id="startDate"></div>
+        <div class="input-group"><label>End Date</label><input type="date" id="endDate"></div>
+      </div>
+      
+      <label>Leave Reason</label>
+      <textarea id="leaveReason" rows="3" style="width:100%;"></textarea>
+      
+      <button class="btn" style="margin-top:20px;" onclick="submitLeave()">Submit Request</button>
+    </div>
+
+    <div id="leaveHistorySection" style="margin-top: 40px;">
+  <h4 style="border-bottom: 1px solid #CBD5E1; padding-bottom: 10px;">Recent Leave History</h4>
+  <table style="width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px;">
+    <thead>
+      <tr style="background: #E2E8F0; text-align: left;">
+        <th style="padding: 10px;">Code</th>
+        <th style="padding: 10px;">Type</th>
+        <th style="padding: 10px;">Start</th>
+        <th style="padding: 10px;">End</th>
+        <th style="padding: 10px;">Status</th>
+        <th style="padding: 10px;">Action</th>
+      </tr>
+    </thead>
+    <tbody id="historyTableBody">
+      <!-- Rows will be injected here -->
+    </tbody>
+  </table>
+</div>
+  </div>
+</div>
+
+<script>
+  // Initialize Datalist on Load
+  window.onload = function() {
+    google.script.run.withSuccessHandler(function(ids) {
+      const list = document.getElementById('empList');
+      ids.forEach(id => {
+        let opt = document.createElement('option');
+        opt.value = id;
+        list.appendChild(opt);
+      });
+    }).getEmployeeIds();
+  };
+
+  function fetchEmployeeDetails() {
+    const empId = document.getElementById('formEmpId').value;
+    google.script.run.withSuccessHandler(function(data) {
+      if (data.error) { alert(data.error); return; }
+      
+      // Populate Profile
+      document.getElementById('dispName').innerText = data.profile.name;
+      document.getElementById('dispDept').innerText = data.profile.dept;
+      document.getElementById('dispBU').innerText = data.profile.bu;
+      document.getElementById('dispCat').innerText = data.profile.category;
+      
+      // Populate Dropdowns & Tables (You will build the table logic here)
+      document.getElementById('employeeDisplay').style.display = 'block';
+      
+      // Update Leave Type Dropdown based on data.balances
+      const select = document.getElementById('leaveTypeSelect');
+      select.innerHTML = '<option value="">Select Leave Type</option>';
+      data.balances.forEach(b => {
+        if(b.balance > 0) { // Only show entitled/available
+           select.innerHTML += `<option value="${b.type}">${b.type} (Bal: ${b.balance})</option>`;
+        }
+      });
+      // FETCH HISTORY TRIGGER
+    fetchHistoryTable(empId);
+    }).getEmployeeForForm(empId);
+  }
+
+
+// NEW FUNCTION: Fetches and builds the history table
+function fetchHistoryTable(empId) {
+  const tbody = document.getElementById('historyTableBody');
+  tbody.innerHTML = '<tr><td colspan="6" style="padding:10px; text-align:center;">Loading history...</td></tr>';
+  
+  google.script.run.withSuccessHandler(function(history) {
+    tbody.innerHTML = '';
+    if (history.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="padding:10px; text-align:center;">No previous records found.</td></tr>';
+      return;
+    }
+    
+    history.forEach(r => {
+      // Format dates safely for display and input injection
+      let sDate = new Date(r.startDate).toISOString().split('T')[0];
+      let eDate = new Date(r.endDate).toISOString().split('T')[0];
+      
+      let row = `
+        <tr style="border-bottom: 1px solid #F1F5F9;">
+          <td style="padding: 10px; font-weight:600;">${r.entryCode}</td>
+          <td style="padding: 10px;">${r.type}</td>
+          <td style="padding: 10px;">${sDate}</td>
+          <td style="padding: 10px;">${eDate}</td>
+          <td style="padding: 10px;">
+            <span style="padding:2px 8px; border-radius:12px; font-size:11px; background:${r.status === 'Not Uploaded' ? '#FEF08A' : '#BBF7D0'}; color:#333;">
+              ${r.status}
+            </span>
+          </td>
+          <td style="padding: 10px;">
+            <button onclick="openEditModal('${r.entryCode}', '${sDate}', '${eDate}', '${r.reason.replace(/'/g, "\\'")}')" 
+                    style="background:none; border:1px solid #CBD5E1; cursor:pointer; padding:4px 8px; border-radius:4px;">
+              Edit
+            </button>
+          </td>
+        </tr>
+      `;
+      tbody.innerHTML += row;
+    });
+  }).getEmployeeLeaveHistory(empId);
+}
+
+// MODAL CONTROLS
+function openEditModal(code, start, end, reason) {
+  document.getElementById('editEntryCode').innerText = code;
+  document.getElementById('editStartDate').value = start;
+  document.getElementById('editEndDate').value = end;
+  document.getElementById('editLeaveReason').value = reason;
+  
+  document.getElementById('editModal').style.display = 'flex';
+}
+
+function closeEditModal() {
+  document.getElementById('editModal').style.display = 'none';
+}
+
+// SUBMIT EDIT
+function submitEdit() {
+  const code = document.getElementById('editEntryCode').innerText;
+  const start = document.getElementById('editStartDate').value;
+  const end = document.getElementById('editEndDate').value;
+  const reason = document.getElementById('editLeaveReason').value;
+  const empId = document.getElementById('formEmpId').value;
+  const btn = document.getElementById('saveEditBtn');
+  
+  if (new Date(end) < new Date(start)) {
+    alert("End Date cannot be earlier than Start Date.");
+    return;
+  }
+  
+  btn.innerText = "Saving...";
+  btn.disabled = true;
+  
+  const updateData = {
+    entryCode: code,
+    empId: empId,
+    startDate: start,
+    endDate: end,
+    leaveReason: reason
+  };
+  
+  google.script.run.withSuccessHandler(function(response) {
+    alert(response.message);
+    btn.innerText = "Save Changes";
+    btn.disabled = false;
+    
+    if (response.success) {
+      closeEditModal();
+      fetchHistoryTable(empId); // Refresh table immediately
+    }
+  }).updateLeaveRecord(updateData, currentUser);
+}
+  /**
+ * Collects form data, validates it, and submits to the backend
+ */
+function submitLeave() {
+  const submitBtn = document.querySelector('#employeeDisplay .btn');
+  const empId = document.getElementById('formEmpId').value;
+  const leaveTypeSelect = document.getElementById('leaveTypeSelect');
+  const leaveType = leaveTypeSelect.value;
+  const startDate = document.getElementById('startDate').value;
+  const endDate = document.getElementById('endDate').value;
+  const leaveReason = document.getElementById('leaveReason').value;
+
+  // 1. Basic Field Validation
+  if (!empId || !leaveType || !startDate || !endDate || !leaveReason) {
+    alert("Please fill in all required fields before submitting.");
+    return;
+  }
+  
+  if (new Date(endDate) < new Date(startDate)) {
+    alert("End Date cannot be earlier than Start Date.");
+    return;
+  }
+
+  // Extract the available balance from the dropdown text for basic frontend validation
+  const selectedOptionText = leaveTypeSelect.options[leaveTypeSelect.selectedIndex].text;
+  let availableBal = 0;
+  const balMatch = selectedOptionText.match(/Bal: ([\d.]+)/);
+  if (balMatch) {
+    availableBal = parseFloat(balMatch[1]);
+  }
+
+  // 2. Build Payload
+  const formData = {
+    empId: empId.toUpperCase(),
+    empName: document.getElementById('dispName').innerText,
+    dept: document.getElementById('dispDept').innerText,
+    category: document.getElementById('dispCat').innerText,
+    bu: document.getElementById('dispBU').innerText,
+    leaveType: leaveType,
+    startDate: startDate,
+    endDate: endDate,
+    leaveReason: leaveReason,
+    availableBalance: availableBal
+  };
+
+  // 3. UI State Management (Prevent double-clicking)
+  submitBtn.innerText = "Processing...";
+  submitBtn.disabled = true;
+
+  // 4. Send to Backend
+  google.script.run
+    .withSuccessHandler(function(response) {
+      if (response.success) {
+        alert(response.message);
+        resetForm();
+      } else {
+        alert(response.message);
+        submitBtn.innerText = "Submit Request";
+        submitBtn.disabled = false;
+      }
+    })
+    .withFailureHandler(function(error) {
+      alert("System Error: " + error.message);
+      submitBtn.innerText = "Submit Request";
+      submitBtn.disabled = false;
+    })
+    // currentUser is the global session variable stored upon successful login
+    .submitLeaveRequest(formData, currentUser); 
+}
+
+/**
+ * Resets the Leave Entry form after a successful submission
+ */
+function resetForm() {
+  document.getElementById('formEmpId').value = "";
+  document.getElementById('employeeDisplay').style.display = 'none';
+  document.getElementById('startDate').value = "";
+  document.getElementById('endDate').value = "";
+  document.getElementById('leaveReason').value = "";
+  
+  const submitBtn = document.querySelector('#employeeDisplay .btn');
+  submitBtn.innerText = "Submit Request";
+  submitBtn.disabled = false;
+}
+</script>
+          </div>
+        </div>
+
+        <!-- Reports Module -->
+        <div id="reportsModule" class="module">
+          <h1>Reports & Balances</h1>
+          <div class="card">
+            <p>Data tables and CSV download buttons will go here.</p>
+          </div>
+        </div>
+
+        <!-- Shift Module -->
+        <div id="shiftModule" class="module">
+          <h1>Shift Roster</h1>
+          <div class="card">
+            <p>Shift calendar and editing tools will go here.</p>
+          </div>
+        </div>
+
+        <!-- Admin Module -->
+        <div id="adminModule" class="module">
+          <h1>Admin Hub</h1>
+          <div class="card">
+            <p>DarwinBox Import/Export and core processing scripts.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- JAVASCRIPT LOGIC -->
+    <script>
+      let currentUser = null;
+
+      function attemptLogin() {
+        const userId = document.getElementById('userId').value;
+        const pass = document.getElementById('password').value;
+        const btn = document.getElementById('loginBtn');
+        const errorDiv = document.getElementById('loginError');
+
+        if (!userId || !pass) {
+          errorDiv.innerText = "Please enter both User ID and Password.";
+          errorDiv.style.display = "block";
+          return;
+        }
+
+        btn.innerText = "Authenticating...";
+        btn.disabled = true;
+        errorDiv.style.display = "none";
+
+        google.script.run
+          .withSuccessHandler(function(response) {
+            btn.innerText = "Log In";
+            btn.disabled = false;
+            
+            if (response.success) {
+              currentUser = response.user;
+              loadDashboard();
+            } else {
+              errorDiv.innerText = response.message;
+              errorDiv.style.display = "block";
+            }
+          })
+          .withFailureHandler(function(error) {
+            btn.innerText = "Log In";
+            btn.disabled = false;
+            errorDiv.innerText = "Connection error. Please try again.";
+            errorDiv.style.display = "block";
+          })
+          .loginUser(userId, pass);
+      }
+
+      function loadDashboard() {
+        document.getElementById('loginView').classList.remove('active');
+        document.getElementById('appView').classList.add('active');
+        
+        document.getElementById('displayUserName').innerText = currentUser.name;
+        
+        // Show admin features if applicable
+        if (currentUser.role === 'admin') {
+          document.getElementById('adminBadge').style.display = 'inline-block';
+          document.getElementById('adminMenuBtn').style.display = 'flex';
+        }
+      }
+
+      function logout() {
+        currentUser = null;
+        document.getElementById('userId').value = "";
+        document.getElementById('password').value = "";
+        
+        // Reset Admin UI
+        document.getElementById('adminBadge').style.display = 'none';
+        document.getElementById('adminMenuBtn').style.display = 'none';
+        
+        // Reset views to default
+        switchModule(document.querySelector('.menu-item[data-target="leaveEntryModule"]'));
+        
+        document.getElementById('appView').classList.remove('active');
+        document.getElementById('loginView').classList.add('active');
+      }
+
+      // Sidebar Navigation Routing
+      function switchModule(clickedEl) {
+        // Remove active class from all menu items
+        document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
+        // Add active class to clicked item
+        clickedEl.classList.add('active');
+        
+        // Hide all modules
+        document.querySelectorAll('.module').forEach(el => el.classList.remove('active'));
+        // Show target module
+        const targetId = clickedEl.getAttribute('data-target');
+        document.getElementById(targetId).classList.add('active');
+      }
+    </script>
+  </body>
+</html>
