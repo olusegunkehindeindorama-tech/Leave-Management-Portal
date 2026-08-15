@@ -1,609 +1,202 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <base target="_top">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <style>
-      :root {
-        --primary: #4f46e5; --primary-dark: #3730a3; --secondary: #06b6d4; --accent: #f97316;
-        --success: #16a34a; --danger: #dc2626; --warning: #ca8a04;
-        --sidebar: #111827; --sidebar-soft: #1f2937; --surface: #ffffff;
-        --muted: #64748b; --line: #e2e8f0; --light: #f1f5f9; --dark: #0f172a;
-      }
-      * { box-sizing: border-box; }
-      body { margin: 0; min-height: 100vh; font-family: 'Inter', sans-serif; color: var(--dark); background: var(--light); }
-      button, input, select, textarea { font-family: inherit; }
-      .view { display: none; min-height: 100vh; width: 100%; }
-      .view.active { display: flex; }
-      #loginView {
-        align-items: center; justify-content: center; padding: 24px;
-        background: radial-gradient(circle at top left, rgba(249,115,22,.32), transparent 28%),
-          radial-gradient(circle at bottom right, rgba(6,182,212,.35), transparent 32%),
-          linear-gradient(135deg, #312e81, #0891b2);
-      }
-      .login-card {
-        width: min(420px, 100%); padding: 40px; border-radius: 28px;
-        background: rgba(255,255,255,.94); box-shadow: 0 24px 80px rgba(15,23,42,.35);
-      }
-      .brand-mark {
-        width: 62px; height: 62px; border-radius: 18px; display: grid; place-items: center;
-        margin: 0 auto 16px; color: white; font-size: 30px;
-        background: linear-gradient(135deg, var(--primary), var(--secondary));
-      }
-      .login-card h1 { margin: 0; text-align: center; font-size: 28px; }
-      .login-card p { text-align: center; color: var(--muted); }
-      .input-group { margin-bottom: 18px; position: relative; }
-      label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 700; color: #334155; }
-      input, select, textarea {
-        width: 100%; padding: 12px 13px; border: 1px solid #cbd5e1; border-radius: 12px;
-        background: white; color: var(--dark); outline: none;
-      }
-      input:focus, select:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 4px rgba(79,70,229,.12); }
-      .btn {
-        border: none; border-radius: 12px; padding: 12px 16px; font-weight: 800; cursor: pointer;
-        color: white; background: linear-gradient(135deg, var(--primary), var(--secondary));
-        transition: transform .15s ease, opacity .15s ease;
-      }
-      .btn:hover { transform: translateY(-1px); }
-      .btn:disabled { opacity: .62; cursor: not-allowed; transform: none; }
-      .btn.secondary { background: #475569; }
-      .btn.success { background: var(--success); }
-      .btn.warning { background: var(--warning); }
-      .btn.danger { background: var(--danger); }
-      .btn.ghost { background: white; color: var(--dark); border: 1px solid var(--line); }
-      .btn.full { width: 100%; }
-      .btn.linkish { background: none; color: var(--primary); border: none; padding: 0; font-weight: 700; cursor: pointer; text-decoration: underline; }
-      .error-msg { display: none; margin: 14px 0; color: var(--danger); font-weight: 700; font-size: 13px; text-align: center; }
-      .support-text { margin-top: 18px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
-      #resetPanel { display: none; margin-top: 12px; text-align: left; }
-      #appView { flex-direction: row; }
-      .sidebar {
-        width: 280px; color: white; background: linear-gradient(180deg, var(--sidebar), var(--sidebar-soft));
-        display: flex; flex-direction: column;
-      }
-      .sidebar-header { padding: 26px 22px; border-bottom: 1px solid rgba(255,255,255,.08); }
-      .sidebar-header h2 { margin: 0; font-size: 20px; }
-      .sidebar-header small { color: #93c5fd; }
-      .menu { flex: 1; padding: 18px 0; }
-      .menu-item { padding: 15px 24px; cursor: pointer; color: #cbd5e1; font-weight: 700; border-left: 4px solid transparent; }
-      .menu-item:hover, .menu-item.active { color: white; background: rgba(255,255,255,.08); border-left-color: var(--secondary); }
-      #adminMenuBtn { display: none; }
-      .user-profile { padding: 20px 24px; border-top: 1px solid rgba(255,255,255,.08); }
-      .admin-badge { display: none; margin-left: 8px; padding: 3px 7px; border-radius: 999px; background: var(--accent); font-size: 11px; }
-      .logout-btn { display: inline-block; margin-top: 10px; color: #fca5a5; cursor: pointer; font-weight: 800; }
-      .main-content { flex: 1; padding: 34px; overflow-y: auto; max-height: 100vh; }
-      .module { display: none; }
-      .module.active { display: block; }
-      .module-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 22px; }
-      h1 { margin: 0; font-size: 28px; }
-      .subtitle { margin: 6px 0 0; color: var(--muted); }
-      .card { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 24px; box-shadow: 0 12px 35px rgba(15,23,42,.07); margin-bottom: 22px; }
-      .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 18px; }
-      .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 18px; }
-      .grid-4 { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
-      .profile-card { display: none; background: #f8fafc; border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
-      .profile-pill { display: inline-flex; padding: 8px 10px; border-radius: 999px; background: white; border: 1px solid var(--line); margin: 4px 8px 4px 0; color: #334155; font-size: 13px; }
-      table { width: 100%; border-collapse: collapse; font-size: 13px; }
-      th, td { padding: 11px 10px; text-align: left; border-bottom: 1px solid var(--line); }
-      th { background: #eef2ff; color: #3730a3; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-      .status-pill { display: inline-flex; padding: 4px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; background: #fef3c7; color: #92400e; }
-      .autocomplete-panel {
-        display: none; position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 4px);
-        max-height: 240px; overflow-y: auto; border: 1px solid var(--line); background: white;
-        border-radius: 12px; box-shadow: 0 18px 45px rgba(15,23,42,.18);
-      }
-      .autocomplete-item { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f1f5f9; }
-      .autocomplete-item:hover { background: #eef2ff; }
-      .modal-backdrop { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(15,23,42,.58); align-items: center; justify-content: center; padding: 20px; }
-      .modal-card { width: min(520px, 100%); background: white; border-radius: 22px; padding: 24px; box-shadow: 0 20px 60px rgba(15,23,42,.35); }
-      .actions { display: flex; gap: 12px; flex-wrap: wrap; }
-      .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-      .cal-head { text-align: center; font-size: 11px; font-weight: 800; color: var(--muted); padding: 6px; }
-      .cal-cell {
-        min-height: 72px; border: 1px solid var(--line); border-radius: 10px; padding: 6px;
-        background: white; cursor: pointer; font-size: 12px;
-      }
-      .cal-cell:hover { border-color: var(--primary); background: #eef2ff; }
-      .cal-cell.empty { background: transparent; border: none; cursor: default; }
-      .cal-daynum { font-weight: 800; color: #334155; }
-      .cal-shift { margin-top: 4px; font-weight: 700; color: var(--primary); }
-      .table-wrap { overflow-x: auto; max-height: 420px; overflow-y: auto; }
-      @media (max-width: 900px) {
-        #appView { flex-direction: column; }
-        .sidebar { width: 100%; }
-        .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
-        .main-content { max-height: none; padding: 20px; }
-      }
-    </style>
-  </head>
-  <body>
-    <div id="loginView" class="view active">
-      <div class="login-card">
-        <div class="brand-mark">🌿</div>
-        <h1>Leave Management</h1>
-        <p>Sign in with your assigned User ID and password.</p>
-        <div id="loginError" class="error-msg"></div>
-        <div class="input-group"><label for="userId">User ID</label><input type="text" id="userId" autocomplete="username" placeholder="Enter your User ID"></div>
-        <div class="input-group"><label for="password">Password</label><input type="password" id="password" autocomplete="current-password" placeholder="Enter your password"></div>
-        <button class="btn full" onclick="attemptLogin()" id="loginBtn">Log In</button>
-
-        <div class="support-text">
-          Forgot your password?<br>
-          <button type="button" class="btn linkish" onclick="showResetPanel()">Reset via security question</button>
-          <br>or contact <b>Mr. Olusegun Kehinde</b> if no question is set.
-        </div>
-
-        <div id="resetPanel">
-          <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0;">
-          <div class="input-group"><label>User ID for reset</label><input type="text" id="resetUserId" placeholder="Your User ID"></div>
-          <button class="btn secondary full" onclick="loadSecurityQuestion()" id="loadQBtn">Load security question</button>
-          <div id="questionBox" style="display:none;margin-top:14px;">
-            <p style="font-size:13px;font-weight:700;" id="securityQuestionText"></p>
-            <div class="input-group"><label>Your answer</label><input type="text" id="resetAnswer" placeholder="Answer"></div>
-            <button class="btn full" onclick="submitPasswordReset()" id="resetBtn">Reset password</button>
-          </div>
-          <div id="resetMsg" class="error-msg" style="display:none;"></div>
-        </div>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{--primary:#4f46e5;--secondary:#06b6d4;--accent:#f97316;--success:#16a34a;--danger:#dc2626;--warning:#ca8a04;--sidebar:#111827;--sidebar-soft:#1f2937;--surface:#fff;--muted:#64748b;--line:#e2e8f0;--light:#f1f5f9;--dark:#0f172a}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,sans-serif;color:var(--dark);background:var(--light)}
+    button,input,select,textarea{font-family:inherit}.view{display:none;min-height:100vh;width:100%}.view.active{display:flex}
+    #loginView{align-items:center;justify-content:center;padding:24px;background:linear-gradient(135deg,#312e81,#0891b2)}
+    .login-card{width:min(420px,100%);padding:40px;border-radius:28px;background:rgba(255,255,255,.94);box-shadow:0 24px 80px rgba(15,23,42,.35)}
+    .brand-mark{width:62px;height:62px;border-radius:18px;display:grid;place-items:center;margin:0 auto 16px;color:#fff;font-size:30px;background:linear-gradient(135deg,var(--primary),var(--secondary))}
+    .login-card h1{margin:0;text-align:center;font-size:28px}.login-card p{text-align:center;color:var(--muted)}
+    .input-group{margin-bottom:18px;position:relative}label{display:block;margin-bottom:7px;font-size:13px;font-weight:700;color:#334155}
+    input,select,textarea{width:100%;padding:12px 13px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;outline:none}
+    .btn{border:none;border-radius:12px;padding:12px 16px;font-weight:800;cursor:pointer;color:#fff;background:linear-gradient(135deg,var(--primary),var(--secondary))}
+    .btn:disabled{opacity:.62;cursor:not-allowed}.btn.secondary{background:#475569}.btn.warning{background:var(--warning)}.btn.success{background:var(--success)}.btn.ghost{background:#fff;color:var(--dark);border:1px solid var(--line)}.btn.full{width:100%}.btn.linkish{background:none;color:var(--primary);border:none;padding:0;font-weight:700;text-decoration:underline;cursor:pointer}
+    .error-msg{display:none;margin:14px 0;color:var(--danger);font-weight:700;font-size:13px;text-align:center}
+    .support-text{margin-top:18px;font-size:12px;color:var(--muted);text-align:center}#resetPanel{display:none;margin-top:12px;text-align:left}
+    #appView{flex-direction:row}.sidebar{width:280px;color:#fff;background:linear-gradient(180deg,var(--sidebar),var(--sidebar-soft));display:flex;flex-direction:column}
+    .sidebar-header{padding:26px 22px;border-bottom:1px solid rgba(255,255,255,.08)}.sidebar-header h2{margin:0;font-size:20px}.sidebar-header small{color:#93c5fd}
+    .menu{flex:1;padding:18px 0}.menu-item{padding:15px 24px;cursor:pointer;color:#cbd5e1;font-weight:700;border-left:4px solid transparent}
+    .menu-item:hover,.menu-item.active{color:#fff;background:rgba(255,255,255,.08);border-left-color:var(--secondary)}#adminMenuBtn{display:none}
+    .user-profile{padding:20px 24px;border-top:1px solid rgba(255,255,255,.08)}.admin-badge{display:none;margin-left:8px;padding:3px 7px;border-radius:999px;background:var(--accent);font-size:11px}
+    .logout-btn{display:inline-block;margin-top:10px;color:#fca5a5;cursor:pointer;font-weight:800}
+    .main-content{flex:1;padding:34px;overflow-y:auto;max-height:100vh}.module{display:none}.module.active{display:block}
+    h1{margin:0;font-size:28px}.subtitle{margin:6px 0 0;color:var(--muted)}
+    .card{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 12px 35px rgba(15,23,42,.07);margin-bottom:22px}
+    .grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+    .profile-card{display:none;background:#f8fafc;border:1px solid var(--line);border-radius:18px;padding:18px}
+    .profile-pill{display:inline-flex;padding:8px 10px;border-radius:999px;background:#fff;border:1px solid var(--line);margin:4px 8px 4px 0;font-size:13px}
+    table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:11px 10px;text-align:left;border-bottom:1px solid var(--line)}th{background:#eef2ff;color:#3730a3;font-size:12px;text-transform:uppercase}
+    .status-pill{display:inline-flex;padding:4px 9px;border-radius:999px;font-size:11px;font-weight:800;background:#fef3c7;color:#92400e}
+    .autocomplete-panel{display:none;position:absolute;z-index:20;left:0;right:0;top:calc(100% + 4px);max-height:240px;overflow-y:auto;border:1px solid var(--line);background:#fff;border-radius:12px;box-shadow:0 18px 45px rgba(15,23,42,.18)}
+    .autocomplete-item{padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9}.autocomplete-item:hover{background:#eef2ff}
+    .modal-backdrop{display:none;position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.58);align-items:center;justify-content:center;padding:20px}
+    .modal-card{width:min(520px,100%);background:#fff;border-radius:22px;padding:24px}.actions{display:flex;gap:12px;flex-wrap:wrap}
+    .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}.cal-head{text-align:center;font-size:11px;font-weight:800;color:var(--muted);padding:6px}
+    .cal-cell{min-height:78px;border:1px solid var(--line);border-radius:10px;padding:6px;background:#fff;cursor:pointer;font-size:11px}
+    .cal-cell:hover{border-color:var(--primary);background:#eef2ff}.cal-cell.empty{background:transparent;border:none;cursor:default}
+    .cal-cell.has-leave{background:#fef3c7;border-color:#f59e0b}.cal-daynum{font-weight:800}.cal-shift{margin-top:2px;font-weight:700;color:var(--primary)}.cal-leave{margin-top:2px;color:#b45309;font-weight:600;font-size:10px}
+    .table-wrap{overflow-x:auto;max-height:420px;overflow-y:auto}
+    @media(max-width:900px){#appView{flex-direction:column}.sidebar{width:100%}.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}.main-content{max-height:none;padding:20px}}
+  </style>
+</head>
+<body>
+<div id="loginView" class="view active">
+  <div class="login-card">
+    <div class="brand-mark">🌿</div>
+    <h1>Leave Management</h1>
+    <p>Sign in with your assigned User ID and password.</p>
+    <div id="loginError" class="error-msg"></div>
+    <div class="input-group"><label>User ID</label><input type="text" id="userId"></div>
+    <div class="input-group"><label>Password</label><input type="password" id="password"></div>
+    <button class="btn full" onclick="attemptLogin()" id="loginBtn">Log In</button>
+    <div class="support-text">Forgot password? <button type="button" class="btn linkish" onclick="showResetPanel()">Reset via security question</button><br>or contact <b>Mr. Olusegun Kehinde</b>.</div>
+    <div id="resetPanel">
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">
+      <div class="input-group"><label>User ID for reset</label><input type="text" id="resetUserId"></div>
+      <button class="btn secondary full" onclick="loadSecurityQuestion()" id="loadQBtn">Load security question</button>
+      <div id="questionBox" style="display:none;margin-top:14px">
+        <p style="font-size:13px;font-weight:700" id="securityQuestionText"></p>
+        <div class="input-group"><label>Your answer</label><input type="text" id="resetAnswer"></div>
+        <button class="btn full" onclick="submitPasswordReset()" id="resetBtn">Reset password</button>
       </div>
+      <div id="resetMsg" class="error-msg"></div>
     </div>
+  </div>
+</div>
 
-    <div id="appView" class="view">
-      <aside class="sidebar">
-        <div class="sidebar-header"><h2>Leave Management</h2><small>Employee leave operations</small></div>
-        <nav class="menu">
-          <div class="menu-item active" data-target="leaveEntryModule" onclick="switchModule(this)">📝 Leave Entry</div>
-          <div class="menu-item" data-target="reportsModule" onclick="switchModule(this)">📊 Reports & Balances</div>
-          <div class="menu-item" data-target="shiftModule" onclick="switchModule(this)">📅 Shift Roster</div>
-          <div class="menu-item" id="adminMenuBtn" data-target="adminModule" onclick="switchModule(this)">⚙️ Admin Hub</div>
-        </nav>
-        <div class="user-profile">
-          <div><b id="displayUserName">Not signed in</b><span id="adminBadge" class="admin-badge">ADMIN</span></div>
-          <span class="logout-btn" onclick="logout()">Logout</span>
-        </div>
-      </aside>
-
-      <main class="main-content">
-        <section id="leaveEntryModule" class="module active">
-          <div class="module-header"><div><h1>Leave Entry</h1><p class="subtitle">Search an employee, review balances (with carry-forward), submit or modify leave.</p></div></div>
-          <div class="card">
-            <div class="grid-2">
-              <div class="input-group">
-                <label for="formEmpId">Employee ID</label>
-                <input type="text" id="formEmpId" oninput="handleEmployeeSearch()" onkeydown="handleEmployeeKey(event)" placeholder="Type any part of an ID, e.g. t75">
-                <div id="employeeSuggestions" class="autocomplete-panel"></div>
-              </div>
-              <div class="input-group"><label>&nbsp;</label><button class="btn full" onclick="fetchEmployeeDetails()">Load Employee</button></div>
-            </div>
-            <div id="employeeDisplay" class="profile-card">
-              <div id="profileSummary"></div>
-              <h3>Visible Leave Balances (incl. carry-forward)</h3>
-              <div id="balanceTable"></div>
-              <h3>New Leave Request</h3>
-              <div class="grid-3">
-                <div class="input-group"><label for="leaveTypeSelect">Leave Type</label><select id="leaveTypeSelect"></select></div>
-                <div class="input-group"><label for="startDate">Start Date</label><input type="date" id="startDate"></div>
-                <div class="input-group"><label for="endDate">End Date</label><input type="date" id="endDate"></div>
-              </div>
-              <div class="input-group"><label for="leaveReason">Leave Reason</label><textarea id="leaveReason" rows="3" placeholder="Enter reason for leave"></textarea></div>
-              <button class="btn" onclick="submitLeave()" id="submitLeaveBtn">Submit Request</button>
-              <h3 style="margin-top:32px;">Recent Leave History</h3>
-              <div id="historyTableWrap"><table><tbody id="historyTableBody"><tr><td>No employee loaded.</td></tr></tbody></table></div>
-            </div>
-          </div>
-        </section>
-
-        <section id="reportsModule" class="module">
-          <div class="module-header"><div><h1>Reports & Balances</h1><p class="subtitle">Carry-forward balance matrix and filterable leave records.</p></div></div>
-          <div class="card">
-            <h3>Balance report (Prev Year / This Year / Utilized / Current)</h3>
-            <div class="grid-2">
-              <div class="input-group"><label>Filter BU (optional)</label><input type="text" id="balBu" placeholder="e.g. IPL"></div>
-              <div class="input-group"><label>Filter Department (optional)</label><input type="text" id="balDept" placeholder="e.g. Mechanical"></div>
-            </div>
-            <div class="actions"><button class="btn" onclick="downloadBalanceReport()">Download Balance CSV</button></div>
-          </div>
-          <div class="card">
-            <h3>Leave records (filterable)</h3>
-            <div class="grid-4">
-              <div class="input-group"><label>Emp ID</label><input type="text" id="repEmpId"></div>
-              <div class="input-group"><label>BU</label><input type="text" id="repBu"></div>
-              <div class="input-group"><label>Department</label><input type="text" id="repDept"></div>
-              <div class="input-group"><label>Leave Type</label><input type="text" id="repType"></div>
-              <div class="input-group"><label>From date</label><input type="date" id="repFrom"></div>
-              <div class="input-group"><label>To date</label><input type="date" id="repTo"></div>
-              <div class="input-group"><label>DB Remark contains</label><input type="text" id="repRemark" placeholder="Not Uploaded"></div>
-            </div>
-            <div class="actions" style="margin-bottom:14px;">
-              <button class="btn" onclick="runLeaveRecordsFilter()">Load records</button>
-              <button class="btn secondary" onclick="downloadLeaveRecordsCsv()">Download filtered CSV</button>
-            </div>
-            <div class="table-wrap"><table><tbody id="leaveRecordsBody"><tr><td>Run a filter to load records.</td></tr></tbody></table></div>
-          </div>
-        </section>
-
-        <section id="shiftModule" class="module">
-          <div class="module-header"><div><h1>Shift Roster</h1><p class="subtitle">Interactive monthly calendar — click a day to edit the shift code.</p></div></div>
-          <div class="card">
-            <div class="grid-3">
-              <div class="input-group"><label>Employee ID</label><input type="text" id="shiftEmpId" placeholder="e.g. FRT7002"></div>
-              <div class="input-group"><label>Year</label><input type="number" id="shiftYear" value="2026"></div>
-              <div class="input-group"><label>Month (1-12)</label><input type="number" id="shiftMonth" min="1" max="12" value="8"></div>
-            </div>
-            <div class="actions">
-              <button class="btn" onclick="loadShiftCalendar()">Load calendar</button>
-              <button class="btn warning" onclick="runShiftImport()">Process shift files from Drive</button>
-            </div>
-            <div id="shiftCalTitle" style="margin:16px 0 8px;font-weight:800;"></div>
-            <div class="cal-grid" id="shiftCalHead"></div>
-            <div class="cal-grid" id="shiftCalBody" style="margin-top:6px;"></div>
-          </div>
-        </section>
-
-        <section id="adminModule" class="module">
-          <div class="module-header"><div><h1>Admin Hub</h1><p class="subtitle">DarwinBox import/export and batch shift processing.</p></div></div>
-          <div class="card actions">
-            <button class="btn success" onclick="runDarwinBoxImport()">Import DarwinBox CSV</button>
-            <button class="btn" onclick="downloadDarwinBoxExport()">Export Local Records for DB</button>
-          </div>
-        </section>
-      </main>
-    </div>
-
-    <div id="editModal" class="modal-backdrop">
-      <div class="modal-card">
-        <h2>Edit Leave Record</h2>
-        <p><strong>Code:</strong> <span id="editEntryCode"></span></p>
+<div id="appView" class="view">
+  <aside class="sidebar">
+    <div class="sidebar-header"><h2>Leave Management</h2><small>Employee leave operations</small></div>
+    <nav class="menu">
+      <div class="menu-item active" data-target="leaveEntryModule" onclick="switchModule(this)">📝 Leave Entry</div>
+      <div class="menu-item" data-target="reportsModule" onclick="switchModule(this)">📊 Reports & Balances</div>
+      <div class="menu-item" data-target="shiftModule" onclick="switchModule(this)">📅 Shift Roster</div>
+      <div class="menu-item" id="adminMenuBtn" data-target="adminModule" onclick="switchModule(this)">⚙️ Admin Hub</div>
+    </nav>
+    <div class="user-profile"><div><b id="displayUserName">—</b><span id="adminBadge" class="admin-badge">ADMIN</span></div><span class="logout-btn" onclick="logout()">Logout</span></div>
+  </aside>
+  <main class="main-content">
+    <section id="leaveEntryModule" class="module active">
+      <h1>Leave Entry</h1><p class="subtitle">Balances use carry-forward & deduct-from rules. Dropdown lists all entitled types.</p>
+      <div class="card">
         <div class="grid-2">
-          <div class="input-group"><label for="editStartDate">Start Date</label><input type="date" id="editStartDate"></div>
-          <div class="input-group"><label for="editEndDate">End Date</label><input type="date" id="editEndDate"></div>
+          <div class="input-group"><label>Employee ID</label><input type="text" id="formEmpId" oninput="handleEmployeeSearch()" onkeydown="handleEmployeeKey(event)" placeholder="Type part of ID"><div id="employeeSuggestions" class="autocomplete-panel"></div></div>
+          <div class="input-group"><label>&nbsp;</label><button class="btn full" onclick="fetchEmployeeDetails()">Load Employee</button></div>
         </div>
-        <div class="input-group"><label for="editLeaveReason">Leave Reason</label><textarea id="editLeaveReason" rows="3"></textarea></div>
-        <div class="actions"><button class="btn" onclick="submitEdit()" id="saveEditBtn">Save Changes</button><button class="btn secondary" onclick="closeEditModal()">Cancel</button></div>
+        <div id="employeeDisplay" class="profile-card">
+          <div id="profileSummary"></div>
+          <h3>Balances (Balance Page Show = Yes)</h3>
+          <div id="balanceTable"></div>
+          <h3>New Leave Request</h3>
+          <div class="grid-3">
+            <div class="input-group"><label>Leave Type (all entitled)</label><select id="leaveTypeSelect"></select></div>
+            <div class="input-group"><label>Start Date</label><input type="date" id="startDate"></div>
+            <div class="input-group"><label>End Date</label><input type="date" id="endDate"></div>
+          </div>
+          <div class="input-group"><label>Leave Reason</label><textarea id="leaveReason" rows="3"></textarea></div>
+          <button class="btn" onclick="submitLeave()" id="submitLeaveBtn">Submit Request</button>
+          <h3 style="margin-top:28px">Leave records (newest first)</h3>
+          <div class="table-wrap"><table><tbody id="historyTableBody"><tr><td>Load an employee.</td></tr></tbody></table></div>
+        </div>
       </div>
-    </div>
-
-    <div id="shiftEditModal" class="modal-backdrop">
-      <div class="modal-card">
-        <h2>Edit Shift</h2>
-        <p><strong>Date:</strong> <span id="shiftEditDate"></span></p>
-        <div class="input-group"><label>Shift code (blank to clear)</label><input type="text" id="shiftEditCode" placeholder="D / N / O / G / A / B / M"></div>
-        <div class="actions"><button class="btn" onclick="saveShiftEdit()" id="saveShiftBtn">Save</button><button class="btn secondary" onclick="closeShiftEdit()">Cancel</button></div>
+    </section>
+    <section id="reportsModule" class="module">
+      <h1>Reports</h1>
+      <div class="card">
+        <div class="grid-2">
+          <div class="input-group"><label>BU filter</label><input id="balBu"></div>
+          <div class="input-group"><label>Dept filter</label><input id="balDept"></div>
+        </div>
+        <button class="btn" onclick="downloadBalanceReport()">Download Balance CSV (carry-forward)</button>
       </div>
-    </div>
+      <div class="card">
+        <div class="grid-4">
+          <div class="input-group"><label>Emp ID</label><input id="repEmpId"></div>
+          <div class="input-group"><label>BU</label><input id="repBu"></div>
+          <div class="input-group"><label>Dept</label><input id="repDept"></div>
+          <div class="input-group"><label>Leave Type</label><input id="repType"></div>
+          <div class="input-group"><label>From</label><input type="date" id="repFrom"></div>
+          <div class="input-group"><label>To</label><input type="date" id="repTo"></div>
+          <div class="input-group"><label>DB Remark</label><input id="repRemark"></div>
+        </div>
+        <div class="actions"><button class="btn" onclick="runLeaveRecordsFilter()">Load</button><button class="btn secondary" onclick="downloadLeaveRecordsCsv()">CSV</button></div>
+        <div class="table-wrap" style="margin-top:12px"><table><tbody id="leaveRecordsBody"></tbody></table></div>
+      </div>
+    </section>
+    <section id="shiftModule" class="module">
+      <h1>Shift Roster</h1><p class="subtitle">Shift codes + leave days highlighted. Click day to edit shift.</p>
+      <div class="card">
+        <div class="grid-3">
+          <div class="input-group"><label>Emp ID</label><input id="shiftEmpId"></div>
+          <div class="input-group"><label>Year</label><input type="number" id="shiftYear"></div>
+          <div class="input-group"><label>Month</label><input type="number" id="shiftMonth" min="1" max="12"></div>
+        </div>
+        <div class="actions"><button class="btn" onclick="loadShiftCalendar()">Load calendar</button><button class="btn warning" onclick="runShiftImport()">Process Drive files</button></div>
+        <div id="shiftCalTitle" style="margin:16px 0 8px;font-weight:800"></div>
+        <div class="cal-grid" id="shiftCalHead"></div>
+        <div class="cal-grid" id="shiftCalBody" style="margin-top:6px"></div>
+      </div>
+    </section>
+    <section id="adminModule" class="module">
+      <h1>Admin Hub</h1>
+      <div class="card actions">
+        <button class="btn success" onclick="runDarwinBoxImport()">Import DarwinBox</button>
+        <button class="btn" onclick="downloadDarwinBoxExport()">Export for DB</button>
+      </div>
+    </section>
+  </main>
+</div>
 
-    <script>
-      let currentUser = null;
-      let loadedEmployee = null;
-      let selectedBalanceMap = {};
-      let employeeSearchTimer = null;
-      let shiftCalContext = { empId: '', year: 0, month: 0 };
+<div id="editModal" class="modal-backdrop"><div class="modal-card">
+  <h2>Edit Leave</h2><p>Code: <span id="editEntryCode"></span></p>
+  <div class="grid-2"><div class="input-group"><label>Start</label><input type="date" id="editStartDate"></div><div class="input-group"><label>End</label><input type="date" id="editEndDate"></div></div>
+  <div class="input-group"><label>Reason</label><textarea id="editLeaveReason" rows="3"></textarea></div>
+  <div class="actions"><button class="btn" onclick="submitEdit()" id="saveEditBtn">Save</button><button class="btn secondary" onclick="closeEditModal()">Cancel</button></div>
+</div></div>
+<div id="shiftEditModal" class="modal-backdrop"><div class="modal-card">
+  <h2>Edit Shift</h2><p>Date: <span id="shiftEditDate"></span></p>
+  <div class="input-group"><label>Code (blank=clear)</label><input id="shiftEditCode"></div>
+  <div class="actions"><button class="btn" onclick="saveShiftEdit()" id="saveShiftBtn">Save</button><button class="btn secondary" onclick="closeShiftEdit()">Cancel</button></div>
+</div></div>
 
-      function showMessage(message, isError) { alert(message || (isError ? 'Action failed.' : 'Action completed.')); }
-      function escapeHtml(value) { return String(value == null ? '' : value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
-      function toInputDate(value) { const d = new Date(value); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10); }
-
-      function showResetPanel() {
-        document.getElementById('resetPanel').style.display = 'block';
-        document.getElementById('resetUserId').value = document.getElementById('userId').value.trim();
-      }
-      function loadSecurityQuestion() {
-        const uid = document.getElementById('resetUserId').value.trim();
-        const msg = document.getElementById('resetMsg');
-        if (!uid) { msg.innerText = 'Enter User ID.'; msg.style.display = 'block'; return; }
-        document.getElementById('loadQBtn').disabled = true;
-        google.script.run.withSuccessHandler(function(res) {
-          document.getElementById('loadQBtn').disabled = false;
-          if (!res.success) { msg.innerText = res.message; msg.style.display = 'block'; document.getElementById('questionBox').style.display = 'none'; return; }
-          msg.style.display = 'none';
-          document.getElementById('securityQuestionText').innerText = res.question;
-          document.getElementById('questionBox').style.display = 'block';
-        }).withFailureHandler(function(e) {
-          document.getElementById('loadQBtn').disabled = false;
-          msg.innerText = e.message || 'Error'; msg.style.display = 'block';
-        }).getSecurityQuestion(uid);
-      }
-      function submitPasswordReset() {
-        const uid = document.getElementById('resetUserId').value.trim();
-        const ans = document.getElementById('resetAnswer').value;
-        const msg = document.getElementById('resetMsg');
-        const btn = document.getElementById('resetBtn');
-        btn.disabled = true; btn.innerText = 'Resetting...';
-        google.script.run.withSuccessHandler(function(res) {
-          btn.disabled = false; btn.innerText = 'Reset password';
-          msg.style.display = 'block';
-          msg.style.color = res.success ? '#16a34a' : '#dc2626';
-          msg.innerText = res.message;
-          if (res.success) {
-            document.getElementById('userId').value = uid;
-            document.getElementById('password').value = '';
-          }
-        }).withFailureHandler(function(e) {
-          btn.disabled = false; btn.innerText = 'Reset password';
-          msg.style.display = 'block'; msg.style.color = '#dc2626'; msg.innerText = e.message || 'Error';
-        }).resetPasswordWithAnswer(uid, ans);
-      }
-
-      function attemptLogin() {
-        const userId = document.getElementById('userId').value.trim();
-        const pass = document.getElementById('password').value;
-        const btn = document.getElementById('loginBtn');
-        const errorDiv = document.getElementById('loginError');
-        if (!userId || !pass) { errorDiv.innerText = 'Please enter both User ID and Password.'; errorDiv.style.display = 'block'; return; }
-        btn.innerText = 'Authenticating...'; btn.disabled = true; errorDiv.style.display = 'none';
-        google.script.run.withSuccessHandler(function(response) {
-          btn.innerText = 'Log In'; btn.disabled = false;
-          if (response.success) { currentUser = response.user; loadDashboard(); }
-          else { errorDiv.innerText = response.message; errorDiv.style.display = 'block'; }
-        }).withFailureHandler(function(error) {
-          btn.innerText = 'Log In'; btn.disabled = false;
-          errorDiv.innerText = error.message || 'Connection error.'; errorDiv.style.display = 'block';
-        }).loginUser(userId, pass);
-      }
-
-      function loadDashboard() {
-        document.getElementById('loginView').classList.remove('active');
-        document.getElementById('appView').classList.add('active');
-        document.getElementById('displayUserName').innerText = currentUser.name;
-        const isAdmin = currentUser.role === 'admin';
-        document.getElementById('adminBadge').style.display = isAdmin ? 'inline-flex' : 'none';
-        document.getElementById('adminMenuBtn').style.display = isAdmin ? 'block' : 'none';
-        const now = new Date();
-        document.getElementById('shiftYear').value = now.getFullYear();
-        document.getElementById('shiftMonth').value = now.getMonth() + 1;
-      }
-      function logout() {
-        currentUser = null; loadedEmployee = null;
-        document.getElementById('userId').value = ''; document.getElementById('password').value = '';
-        document.getElementById('appView').classList.remove('active');
-        document.getElementById('loginView').classList.add('active');
-      }
-      function switchModule(clickedEl) {
-        document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
-        clickedEl.classList.add('active');
-        document.querySelectorAll('.module').forEach(el => el.classList.remove('active'));
-        document.getElementById(clickedEl.dataset.target).classList.add('active');
-      }
-
-      function handleEmployeeSearch() {
-        clearTimeout(employeeSearchTimer);
-        const query = document.getElementById('formEmpId').value.trim();
-        const panel = document.getElementById('employeeSuggestions');
-        if (query.length < 2) { panel.style.display = 'none'; return; }
-        employeeSearchTimer = setTimeout(function() {
-          google.script.run.withSuccessHandler(function(results) {
-            if (!results || !results.length) { panel.style.display = 'none'; return; }
-            panel.innerHTML = results.map(item => `<div class="autocomplete-item" onclick="selectEmployee('${escapeHtml(item.id)}')"><b>${escapeHtml(item.id)}</b> — ${escapeHtml(item.name)} <small>${escapeHtml(item.department || '')}</small></div>`).join('');
-            panel.style.display = 'block';
-          }).searchEmployees(query, 12);
-        }, 180);
-      }
-      function handleEmployeeKey(event) { if (event.key === 'Enter') { event.preventDefault(); fetchEmployeeDetails(); } }
-      function selectEmployee(empId) { document.getElementById('formEmpId').value = empId; document.getElementById('employeeSuggestions').style.display = 'none'; fetchEmployeeDetails(); }
-
-      function fetchEmployeeDetails() {
-        const empId = document.getElementById('formEmpId').value.trim();
-        if (!empId) { showMessage('Please enter an employee ID.', true); return; }
-        google.script.run.withSuccessHandler(function(data) {
-          if (data.error) { showMessage(data.error, true); return; }
-          loadedEmployee = data.profile;
-          selectedBalanceMap = {};
-          document.getElementById('employeeDisplay').style.display = 'block';
-          document.getElementById('profileSummary').innerHTML =
-            `<span class="profile-pill"><b>${escapeHtml(data.profile.id)}</b></span>` +
-            `<span class="profile-pill">${escapeHtml(data.profile.name)}</span>` +
-            `<span class="profile-pill">Dept: ${escapeHtml(data.profile.dept)}</span>` +
-            `<span class="profile-pill">BU: ${escapeHtml(data.profile.bu)}</span>` +
-            `<span class="profile-pill">Category: ${escapeHtml(data.profile.category)}</span>`;
-          renderBalances(data.balances || []);
-          fetchHistoryTable(data.profile.id);
-        }).withFailureHandler(function(error) { showMessage(error.message, true); }).getEmployeeForForm(empId);
-      }
-
-      function renderBalances(balances) {
-        const select = document.getElementById('leaveTypeSelect');
-        select.innerHTML = '<option value="">Select Leave Type</option>';
-        let rows = '';
-        balances.forEach(b => {
-          selectedBalanceMap[b.type] = b;
-          const balText = b.balance === 'Unlimited' ? 'Unlimited' : Number(b.balance || 0).toFixed(2);
-          const d = b.detail || {};
-          const prev = d.prevYearBalance != null ? d.prevYearBalance : '—';
-          const tyEnt = d.thisYearEntitlement != null ? d.thisYearEntitlement : b.entitlement;
-          const tyUtil = d.thisYearUtilized != null ? d.thisYearUtilized : b.utilized;
-          rows += `<tr>
-            <td>${escapeHtml(b.type)}</td>
-            <td>${escapeHtml(prev)}${d.carryExpired ? ' <small>(expired)</small>' : ''}</td>
-            <td>${escapeHtml(tyEnt)}</td>
-            <td>${escapeHtml(tyUtil)}</td>
-            <td><b>${escapeHtml(balText)}</b></td>
-          </tr>`;
-          if (b.balance === 'Unlimited' || Number(b.balance) > 0)
-            select.innerHTML += `<option value="${escapeHtml(b.type)}">${escapeHtml(b.type)} (Bal: ${escapeHtml(balText)})</option>`;
-        });
-        document.getElementById('balanceTable').innerHTML =
-          `<table><thead><tr><th>Leave Type</th><th>Prev Year Bal</th><th>This Year Entitlement</th><th>Utilized This Year</th><th>Current Balance</th></tr></thead>` +
-          `<tbody>${rows || '<tr><td colspan="5">No visible leave balances found.</td></tr>'}</tbody></table>`;
-      }
-
-      function submitLeave() {
-        const leaveType = document.getElementById('leaveTypeSelect').value;
-        const startDate = document.getElementById('startDate').value;
-        const endDate = document.getElementById('endDate').value;
-        const leaveReason = document.getElementById('leaveReason').value.trim();
-        if (!loadedEmployee || !leaveType || !startDate || !endDate || !leaveReason) { showMessage('Please load an employee and complete all leave fields.', true); return; }
-        if (new Date(endDate) < new Date(startDate)) { showMessage('End Date cannot be earlier than Start Date.', true); return; }
-        const bal = selectedBalanceMap[leaveType] || {};
-        const btn = document.getElementById('submitLeaveBtn'); btn.innerText = 'Processing...'; btn.disabled = true;
-        google.script.run.withSuccessHandler(function(response) {
-          btn.innerText = 'Submit Request'; btn.disabled = false;
-          showMessage(response.message, !response.success);
-          if (response.success) {
-            document.getElementById('startDate').value = '';
-            document.getElementById('endDate').value = '';
-            document.getElementById('leaveReason').value = '';
-            fetchEmployeeDetails();
-          }
-        }).withFailureHandler(function(error) {
-          btn.innerText = 'Submit Request'; btn.disabled = false; showMessage(error.message, true);
-        }).submitLeaveRequest({
-          empId: loadedEmployee.id, empName: loadedEmployee.name, dept: loadedEmployee.dept,
-          category: loadedEmployee.category, bu: loadedEmployee.bu,
-          leaveType, startDate, endDate, leaveReason,
-          availableBalance: bal.balance === 'Unlimited' ? 999999 : Number(bal.balance || 0)
-        }, currentUser);
-      }
-
-      function fetchHistoryTable(empId) {
-        const tbody = document.getElementById('historyTableBody');
-        tbody.innerHTML = '<tr><td>Loading history...</td></tr>';
-        google.script.run.withSuccessHandler(function(history) {
-          if (!history || !history.length) { tbody.innerHTML = '<tr><td>No previous records found.</td></tr>'; return; }
-          tbody.innerHTML = `<tr><th>Code</th><th>Type</th><th>Start</th><th>End</th><th>Status</th><th>Action</th></tr>` +
-            history.map(r => {
-              const sDate = toInputDate(r.startDate); const eDate = toInputDate(r.endDate);
-              const reason = escapeHtml(r.reason).replace(/`/g, '&#96;');
-              return `<tr><td><b>${escapeHtml(r.entryCode)}</b></td><td>${escapeHtml(r.type)}</td><td>${sDate}</td><td>${eDate}</td>` +
-                `<td><span class="status-pill">${escapeHtml(r.status || 'Unknown')}</span></td>` +
-                `<td><button class="btn ghost" onclick="openEditModal(\`${escapeHtml(r.entryCode)}\`, '${sDate}', '${eDate}', \`${reason}\`)">Edit</button></td></tr>`;
-            }).join('');
-        }).getEmployeeLeaveHistory(empId);
-      }
-
-      function openEditModal(code, start, end, reason) {
-        document.getElementById('editEntryCode').innerText = code;
-        document.getElementById('editStartDate').value = start;
-        document.getElementById('editEndDate').value = end;
-        document.getElementById('editLeaveReason').value = reason;
-        document.getElementById('editModal').style.display = 'flex';
-      }
-      function closeEditModal() { document.getElementById('editModal').style.display = 'none'; }
-      function submitEdit() {
-        const code = document.getElementById('editEntryCode').innerText;
-        const start = document.getElementById('editStartDate').value;
-        const end = document.getElementById('editEndDate').value;
-        const reason = document.getElementById('editLeaveReason').value;
-        const btn = document.getElementById('saveEditBtn');
-        if (new Date(end) < new Date(start)) { showMessage('End Date cannot be earlier than Start Date.', true); return; }
-        btn.innerText = 'Saving...'; btn.disabled = true;
-        google.script.run.withSuccessHandler(function(response) {
-          btn.innerText = 'Save Changes'; btn.disabled = false;
-          showMessage(response.message, !response.success);
-          if (response.success) { closeEditModal(); fetchEmployeeDetails(); }
-        }).withFailureHandler(function(error) {
-          btn.innerText = 'Save Changes'; btn.disabled = false; showMessage(error.message, true);
-        }).updateLeaveRecord({ entryCode: code, empId: loadedEmployee.id, startDate: start, endDate: end, leaveReason: reason }, currentUser);
-      }
-
-      function downloadCsv(filename, csv) {
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = filename;
-        document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-      }
-      function downloadBalanceReport() {
-        const bu = document.getElementById('balBu').value.trim() || null;
-        const dept = document.getElementById('balDept').value.trim() || null;
-        google.script.run.withSuccessHandler(function(csv) {
-          downloadCsv('Leave_Balance_Report_CarryForward.csv', csv);
-        }).buildBalanceReportCsv(bu, dept);
-      }
-      function runLeaveRecordsFilter() {
-        const filters = {
-          empId: document.getElementById('repEmpId').value.trim(),
-          bu: document.getElementById('repBu').value.trim(),
-          dept: document.getElementById('repDept').value.trim(),
-          leaveType: document.getElementById('repType').value.trim(),
-          fromDate: document.getElementById('repFrom').value,
-          toDate: document.getElementById('repTo').value,
-          dbRemark: document.getElementById('repRemark').value.trim(),
-          limit: 300
-        };
-        const tbody = document.getElementById('leaveRecordsBody');
-        tbody.innerHTML = '<tr><td>Loading...</td></tr>';
-        google.script.run.withSuccessHandler(function(res) {
-          if (!res.rows || !res.rows.length) { tbody.innerHTML = '<tr><td>No matching records.</td></tr>'; return; }
-          tbody.innerHTML = `<tr><th>Code</th><th>Emp</th><th>Name</th><th>Type</th><th>Start</th><th>End</th><th>Util</th><th>Remark</th></tr>` +
-            res.rows.map(r => `<tr>
-              <td>${escapeHtml(r.entryCode)}</td><td>${escapeHtml(r.empId)}</td><td>${escapeHtml(r.empName)}</td>
-              <td>${escapeHtml(r.leaveType)}</td><td>${toInputDate(r.startDate)}</td><td>${toInputDate(r.endDate)}</td>
-              <td>${escapeHtml(r.utilized)}</td><td>${escapeHtml(r.dbRemark)}</td></tr>`).join('');
-        }).getLeaveRecordsFiltered(filters);
-      }
-      function downloadLeaveRecordsCsv() {
-        const filters = {
-          empId: document.getElementById('repEmpId').value.trim(),
-          bu: document.getElementById('repBu').value.trim(),
-          dept: document.getElementById('repDept').value.trim(),
-          leaveType: document.getElementById('repType').value.trim(),
-          fromDate: document.getElementById('repFrom').value,
-          toDate: document.getElementById('repTo').value,
-          dbRemark: document.getElementById('repRemark').value.trim(),
-          limit: 5000
-        };
-        google.script.run.withSuccessHandler(function(csv) {
-          downloadCsv('Leave_Records_Filtered.csv', csv);
-        }).buildLeaveRecordsCsv(filters);
-      }
-
-      function loadShiftCalendar() {
-        const empId = document.getElementById('shiftEmpId').value.trim();
-        const year = Number(document.getElementById('shiftYear').value);
-        const month = Number(document.getElementById('shiftMonth').value);
-        if (!empId) { showMessage('Enter Employee ID', true); return; }
-        google.script.run.withSuccessHandler(function(res) {
-          if (res.error) { showMessage(res.error, true); return; }
-          shiftCalContext = { empId: res.empId, year: res.year, month: res.month };
-          const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-          document.getElementById('shiftCalTitle').innerText = res.empId + ' — ' + monthNames[res.month - 1] + ' ' + res.year;
-          const heads = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-          document.getElementById('shiftCalHead').innerHTML = heads.map(h => `<div class="cal-head">${h}</div>`).join('');
-          const firstDow = res.days.length ? res.days[0].dayOfWeek : 0;
-          let html = '';
-          for (let i = 0; i < firstDow; i++) html += '<div class="cal-cell empty"></div>';
-          res.days.forEach(d => {
-            html += `<div class="cal-cell" onclick="openShiftEdit('${d.date}','${escapeHtml(d.shift)}')">` +
-              `<div class="cal-daynum">${d.day}</div><div class="cal-shift">${escapeHtml(d.shift || '—')}</div></div>`;
-          });
-          document.getElementById('shiftCalBody').innerHTML = html;
-        }).getShiftCalendar(empId, year, month);
-      }
-      function openShiftEdit(dateStr, code) {
-        document.getElementById('shiftEditDate').innerText = dateStr;
-        document.getElementById('shiftEditCode').value = code === '—' ? '' : code;
-        document.getElementById('shiftEditModal').style.display = 'flex';
-      }
-      function closeShiftEdit() { document.getElementById('shiftEditModal').style.display = 'none'; }
-      function saveShiftEdit() {
-        const dateStr = document.getElementById('shiftEditDate').innerText;
-        const code = document.getElementById('shiftEditCode').value.trim();
-        const btn = document.getElementById('saveShiftBtn');
-        btn.disabled = true; btn.innerText = 'Saving...';
-        google.script.run.withSuccessHandler(function(res) {
-          btn.disabled = false; btn.innerText = 'Save';
-          showMessage(res.message, !res.success);
-          if (res.success) { closeShiftEdit(); loadShiftCalendar(); }
-        }).withFailureHandler(function(e) {
-          btn.disabled = false; btn.innerText = 'Save'; showMessage(e.message, true);
-        }).updateShiftCode(shiftCalContext.empId, dateStr, code, currentUser);
-      }
-
-      function downloadDarwinBoxExport() {
-        google.script.run.withSuccessHandler(function(result) {
-          if (!result.success) { showMessage(result.message, true); return; }
-          downloadCsv(result.fileName, result.csv);
-        }).buildDarwinBoxExportCsv();
-      }
-      function runDarwinBoxImport() {
-        google.script.run.withSuccessHandler(function(result) {
-          showMessage(result && result.message ? result.message : 'Import completed.');
-        }).importDarwinBoxLeaves();
-      }
-      function runShiftImport() {
-        google.script.run.withSuccessHandler(function(result) {
-          showMessage(result && result.message ? result.message : 'Shift update completed.');
-        }).processShiftFiles();
-      }
-    </script>
-  </body>
+<script>
+let currentUser=null,loadedEmployee=null,selectedBalanceMap={},employeeSearchTimer=null,shiftCalContext={};
+function showMessage(m,e){alert(m||(e?'Failed':'OK'))}
+function escapeHtml(v){return String(v==null?'':v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+function toInputDate(v){const d=new Date(v);return isNaN(d)? '':d.toISOString().slice(0,10)}
+function showResetPanel(){document.getElementById('resetPanel').style.display='block';document.getElementById('resetUserId').value=document.getElementById('userId').value.trim()}
+function loadSecurityQuestion(){const uid=document.getElementById('resetUserId').value.trim();const msg=document.getElementById('resetMsg');if(!uid){msg.innerText='Enter User ID';msg.style.display='block';return}google.script.run.withSuccessHandler(r=>{if(!r.success){msg.innerText=r.message;msg.style.display='block';return}msg.style.display='none';document.getElementById('securityQuestionText').innerText=r.question;document.getElementById('questionBox').style.display='block'}).getSecurityQuestion(uid)}
+function submitPasswordReset(){const uid=document.getElementById('resetUserId').value.trim(),ans=document.getElementById('resetAnswer').value,msg=document.getElementById('resetMsg');google.script.run.withSuccessHandler(r=>{msg.style.display='block';msg.style.color=r.success?'#16a34a':'#dc2626';msg.innerText=r.message}).resetPasswordWithAnswer(uid,ans)}
+function attemptLogin(){const userId=document.getElementById('userId').value.trim(),pass=document.getElementById('password').value,btn=document.getElementById('loginBtn'),err=document.getElementById('loginError');if(!userId||!pass){err.innerText='Enter ID and password';err.style.display='block';return}btn.disabled=true;btn.innerText='...';google.script.run.withSuccessHandler(r=>{btn.disabled=false;btn.innerText='Log In';if(r.success){currentUser=r.user;loadDashboard()}else{err.innerText=r.message;err.style.display='block'}}).withFailureHandler(e=>{btn.disabled=false;btn.innerText='Log In';err.innerText=e.message;err.style.display='block'}).loginUser(userId,pass)}
+function loadDashboard(){document.getElementById('loginView').classList.remove('active');document.getElementById('appView').classList.add('active');document.getElementById('displayUserName').innerText=currentUser.name;const a=currentUser.role==='admin';document.getElementById('adminBadge').style.display=a?'inline-flex':'none';document.getElementById('adminMenuBtn').style.display=a?'block':'none';const n=new Date();document.getElementById('shiftYear').value=n.getFullYear();document.getElementById('shiftMonth').value=n.getMonth()+1}
+function logout(){currentUser=null;loadedEmployee=null;document.getElementById('appView').classList.remove('active');document.getElementById('loginView').classList.add('active')}
+function switchModule(el){document.querySelectorAll('.menu-item').forEach(e=>e.classList.remove('active'));el.classList.add('active');document.querySelectorAll('.module').forEach(e=>e.classList.remove('active'));document.getElementById(el.dataset.target).classList.add('active')}
+function handleEmployeeSearch(){clearTimeout(employeeSearchTimer);const q=document.getElementById('formEmpId').value.trim(),p=document.getElementById('employeeSuggestions');if(q.length<2){p.style.display='none';return}employeeSearchTimer=setTimeout(()=>google.script.run.withSuccessHandler(r=>{if(!r||!r.length){p.style.display='none';return}p.innerHTML=r.map(i=>`<div class="autocomplete-item" onclick="selectEmployee('${escapeHtml(i.id)}')"><b>${escapeHtml(i.id)}</b> — ${escapeHtml(i.name)}</div>`).join('');p.style.display='block'}).searchEmployees(q,12),150)}
+function handleEmployeeKey(e){if(e.key==='Enter'){e.preventDefault();fetchEmployeeDetails()}}
+function selectEmployee(id){document.getElementById('formEmpId').value=id;document.getElementById('employeeSuggestions').style.display='none';fetchEmployeeDetails()}
+function fetchEmployeeDetails(){const empId=document.getElementById('formEmpId').value.trim();if(!empId)return showMessage('Enter Emp ID',true);google.script.run.withSuccessHandler(data=>{if(data.error)return showMessage(data.error,true);loadedEmployee=data.profile;selectedBalanceMap={};document.getElementById('employeeDisplay').style.display='block';document.getElementById('profileSummary').innerHTML=`<span class="profile-pill"><b>${escapeHtml(data.profile.id)}</b></span><span class="profile-pill">${escapeHtml(data.profile.name)}</span><span class="profile-pill">${escapeHtml(data.profile.dept)}</span><span class="profile-pill">${escapeHtml(data.profile.bu)}</span><span class="profile-pill">${escapeHtml(data.profile.category)}</span>`;renderBalances(data.balances||[],data.entitledTypes||[]);fetchHistoryTable(data.profile.id)}).getEmployeeForForm(empId)}
+function renderBalances(balances,entitledTypes){const select=document.getElementById('leaveTypeSelect');select.innerHTML='<option value="">Select Leave Type</option>';let rows='';const shown=balances.filter(b=>b.show!==false);shown.forEach(b=>{selectedBalanceMap[b.type]=b;const bal=b.balance==='Unlimited'?'Unlimited':Number(b.balance||0).toFixed(2);const d=b.detail||{};rows+=`<tr><td>${escapeHtml(b.type)}</td><td>${escapeHtml(d.prevYearBalance!=null?d.prevYearBalance:'—')}</td><td>${escapeHtml(d.thisYearEntitlement!=null?d.thisYearEntitlement:b.entitlement)}</td><td>${escapeHtml(d.thisYearUtilized!=null?d.thisYearUtilized:b.utilized)}</td><td><b>${escapeHtml(bal)}</b></td></tr>`});balances.forEach(b=>{selectedBalanceMap[b.type]=b});(entitledTypes&&entitledTypes.length?entitledTypes:balances.map(b=>b.type)).forEach(t=>{const b=selectedBalanceMap[t]||{balance:0,type:t};const bal=b.balance==='Unlimited'?'Unlimited':Number(b.balance||0).toFixed(2);select.innerHTML+=`<option value="${escapeHtml(t)}">${escapeHtml(t)} (Bal: ${escapeHtml(bal)})</option>`});document.getElementById('balanceTable').innerHTML=`<table><thead><tr><th>Type</th><th>Prev Yr</th><th>This Yr Ent</th><th>Util This Yr</th><th>Balance</th></tr></thead><tbody>${rows||'<tr><td colspan=5>None</td></tr>'}</tbody></table>`}
+function submitLeave(){const leaveType=document.getElementById('leaveTypeSelect').value,startDate=document.getElementById('startDate').value,endDate=document.getElementById('endDate').value,leaveReason=document.getElementById('leaveReason').value.trim();if(!loadedEmployee||!leaveType||!startDate||!endDate||!leaveReason)return showMessage('Complete all fields',true);if(new Date(endDate)<new Date(startDate))return showMessage('End before start',true);const bal=selectedBalanceMap[leaveType]||{};const btn=document.getElementById('submitLeaveBtn');btn.disabled=true;btn.innerText='...';google.script.run.withSuccessHandler(r=>{btn.disabled=false;btn.innerText='Submit Request';showMessage(r.message,!r.success);if(r.success){document.getElementById('startDate').value='';document.getElementById('endDate').value='';document.getElementById('leaveReason').value='';fetchEmployeeDetails()}}).withFailureHandler(e=>{btn.disabled=false;btn.innerText='Submit Request';showMessage(e.message,true)}).submitLeaveRequest({empId:loadedEmployee.id,empName:loadedEmployee.name,dept:loadedEmployee.dept,category:loadedEmployee.category,bu:loadedEmployee.bu,leaveType,startDate,endDate,leaveReason,availableBalance:bal.balance==='Unlimited'?999999:Number(bal.balance||0)},currentUser)}
+function fetchHistoryTable(empId){const tbody=document.getElementById('historyTableBody');tbody.innerHTML='<tr><td>Loading...</td></tr>';google.script.run.withSuccessHandler(h=>{if(!h||!h.length){tbody.innerHTML='<tr><td>No records</td></tr>';return}tbody.innerHTML=`<tr><th>Emp ID</th><th>Name</th><th>Start</th><th>End</th><th>Days</th><th>Leave Year</th><th>Type</th><th></th></tr>`+h.map(r=>{const s=toInputDate(r.startDate),e=toInputDate(r.endDate),reason=escapeHtml(r.reason||'').replace(/`/g,'&#96;');return `<tr><td>${escapeHtml(r.empId)}</td><td>${escapeHtml(r.empName)}</td><td>${s}</td><td>${e}</td><td>${escapeHtml(r.noOfDays)}</td><td>${escapeHtml(r.entitlementYear)}</td><td>${escapeHtml(r.type)}</td><td><button class="btn ghost" onclick="openEditModal(\`${escapeHtml(r.entryCode)}\`,'${s}','${e}',\`${reason}\`)">Edit</button></td></tr>`}).join('')}).getEmployeeLeaveHistory(empId)}
+function openEditModal(c,s,e,r){document.getElementById('editEntryCode').innerText=c;document.getElementById('editStartDate').value=s;document.getElementById('editEndDate').value=e;document.getElementById('editLeaveReason').value=r;document.getElementById('editModal').style.display='flex'}
+function closeEditModal(){document.getElementById('editModal').style.display='none'}
+function submitEdit(){const code=document.getElementById('editEntryCode').innerText,start=document.getElementById('editStartDate').value,end=document.getElementById('editEndDate').value,reason=document.getElementById('editLeaveReason').value,btn=document.getElementById('saveEditBtn');btn.disabled=true;google.script.run.withSuccessHandler(r=>{btn.disabled=false;showMessage(r.message,!r.success);if(r.success){closeEditModal();fetchEmployeeDetails()}}).updateLeaveRecord({entryCode:code,empId:loadedEmployee.id,startDate:start,endDate:end,leaveReason:reason},currentUser)}
+function downloadCsv(n,c){const b=new Blob([c],{type:'text/csv'}),u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;a.download=n;a.click();URL.revokeObjectURL(u)}
+function downloadBalanceReport(){google.script.run.withSuccessHandler(c=>downloadCsv('Balance_CF.csv',c)).buildBalanceReportCsv(document.getElementById('balBu').value.trim()||null,document.getElementById('balDept').value.trim()||null)}
+function runLeaveRecordsFilter(){const f={empId:document.getElementById('repEmpId').value.trim(),bu:document.getElementById('repBu').value.trim(),dept:document.getElementById('repDept').value.trim(),leaveType:document.getElementById('repType').value.trim(),fromDate:document.getElementById('repFrom').value,toDate:document.getElementById('repTo').value,dbRemark:document.getElementById('repRemark').value.trim(),limit:300};google.script.run.withSuccessHandler(res=>{const t=document.getElementById('leaveRecordsBody');if(!res.rows.length){t.innerHTML='<tr><td>None</td></tr>';return}t.innerHTML=`<tr><th>Code</th><th>Emp</th><th>Type</th><th>Start</th><th>End</th><th>Util</th></tr>`+res.rows.map(r=>`<tr><td>${escapeHtml(r.entryCode)}</td><td>${escapeHtml(r.empId)}</td><td>${escapeHtml(r.leaveType)}</td><td>${toInputDate(r.startDate)}</td><td>${toInputDate(r.endDate)}</td><td>${escapeHtml(r.utilized)}</td></tr>`).join('')}).getLeaveRecordsFiltered(f)}
+function downloadLeaveRecordsCsv(){google.script.run.withSuccessHandler(c=>downloadCsv('Leaves.csv',c)).buildLeaveRecordsCsv({empId:document.getElementById('repEmpId').value.trim(),bu:document.getElementById('repBu').value.trim(),dept:document.getElementById('repDept').value.trim(),leaveType:document.getElementById('repType').value.trim(),fromDate:document.getElementById('repFrom').value,toDate:document.getElementById('repTo').value,dbRemark:document.getElementById('repRemark').value.trim(),limit:5000})}
+function loadShiftCalendar(){const empId=document.getElementById('shiftEmpId').value.trim(),year=+document.getElementById('shiftYear').value,month=+document.getElementById('shiftMonth').value;if(!empId)return showMessage('Emp ID required',true);google.script.run.withSuccessHandler(res=>{if(res.error)return showMessage(res.error,true);shiftCalContext={empId:res.empId,year:res.year,month:res.month};const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];document.getElementById('shiftCalTitle').innerText=res.empId+' — '+mn[res.month-1]+' '+res.year;document.getElementById('shiftCalHead').innerHTML=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(h=>`<div class="cal-head">${h}</div>`).join('');const fd=res.days[0]?res.days[0].dayOfWeek:0;let html='';for(let i=0;i<fd;i++)html+='<div class="cal-cell empty"></div>';res.days.forEach(d=>{const hasL=d.leaves&&d.leaves.length;const leaveTxt=hasL?d.leaves.join(', '):'';html+=`<div class="cal-cell${hasL?' has-leave':''}" onclick="openShiftEdit('${d.date}','${escapeHtml(d.shift)}')"><div class="cal-daynum">${d.day}</div><div class="cal-shift">${escapeHtml(d.shift||'—')}</div>${hasL?`<div class="cal-leave">${escapeHtml(leaveTxt)}</div>`:''}</div>`});document.getElementById('shiftCalBody').innerHTML=html}).getShiftCalendar(empId,year,month)}
+function openShiftEdit(d,c){document.getElementById('shiftEditDate').innerText=d;document.getElementById('shiftEditCode').value=c==='—'?'':c;document.getElementById('shiftEditModal').style.display='flex'}
+function closeShiftEdit(){document.getElementById('shiftEditModal').style.display='none'}
+function saveShiftEdit(){const d=document.getElementById('shiftEditDate').innerText,c=document.getElementById('shiftEditCode').value.trim();google.script.run.withSuccessHandler(r=>{showMessage(r.message,!r.success);if(r.success){closeShiftEdit();loadShiftCalendar()}}).updateShiftCode(shiftCalContext.empId,d,c,currentUser)}
+function downloadDarwinBoxExport(){google.script.run.withSuccessHandler(r=>{if(!r.success)return showMessage(r.message,true);downloadCsv(r.fileName,r.csv)}).buildDarwinBoxExportCsv()}
+function runDarwinBoxImport(){google.script.run.withSuccessHandler(r=>showMessage(r&&r.message||'Done')).importDarwinBoxLeaves()}
+function runShiftImport(){google.script.run.withSuccessHandler(r=>showMessage(r&&r.message||'Done')).processShiftFiles()}
+</script>
+</body>
 </html>
