@@ -1,8 +1,9 @@
 /**
  * LEAVE ENTITLEMENT & UTILIZATION
- * - ShiftRoaster + Multiplier (Yes → A/B/D/N/M = 1.5)
- * - No roster day → Mon–Fri = G (1), Sat–Sun = O (0)
- * - ActualDays = inclusive calendar days
+ * Official table (leave calculation.docx):
+ *   ShiftRoaster: G=1, A/B/D/N=1.5, O=0
+ *   ActualDays: every calendar day = 1 (including O)
+ * No roster → Mon–Fri = G, Sat–Sun = O
  */
 
 function checkMatch(empValue, policyValue, weight) {
@@ -60,52 +61,51 @@ function formatDateKey(dateObj) {
   return y + "-" + m + "-" + d;
 }
 
-/**
- * Resolve calculation method + multiplier flag for a leave type from policies.
- */
+/** Calculation Method from Sys_LeavePolicies for this leave type. */
 function getLeaveCalcMeta_(leaveType) {
   var policies = (typeof loadPoliciesCached_ === "function") ? loadPoliciesCached_() : [];
   var method = "ActualDays";
-  var useMultiplier = false;
   var deductFrom = "";
   for (var i = 0; i < policies.length; i++) {
     if (String(policies[i]["Leave Type"] || "").trim() !== String(leaveType).trim()) continue;
     var m = String(policies[i]["Calculation Method"] || "").trim();
     if (m) method = m;
-    var mult = String(policies[i]["Multiplier"] || "").trim().toLowerCase();
-    useMultiplier = (mult === "yes" || mult === "y" || mult === "true");
     deductFrom = String(policies[i]["Deduct from"] || "").trim();
     break;
   }
-  return { method: method, useMultiplier: useMultiplier, deductFrom: deductFrom };
+  // Normalise method names from policy sheet
+  var ml = method.toLowerCase().replace(/\s+/g, "");
+  if (ml.indexOf("shift") > -1 || ml.indexOf("roaster") > -1 || ml.indexOf("roster") > -1) {
+    method = "ShiftRoaster";
+  } else {
+    method = "ActualDays";
+  }
+  return { method: method, deductFrom: deductFrom };
 }
 
 /**
- * Day weight for one shift code.
+ * Official Shift Roaster multipliers (leave calculation.docx).
+ * G=1, A/B/D/N(/M)=1.5, O=0
  */
-function shiftDayWeight_(code, useMultiplier) {
+function shiftRoasterWeight_(code) {
   code = String(code || "").trim().toUpperCase();
-  if (code === "O" || code === "OFF" || code === "REST" || code === "R" || code === "WO" || code === "W/O" || code === "LEAVE" || code === "L") return 0;
+  if (code === "O" || code === "OFF" || code === "REST" || code === "R" ||
+      code === "WO" || code === "W/O" || code === "LEAVE" || code === "L") return 0;
   if (code === "G") return 1;
-  if (["A", "B", "D", "N", "M"].indexOf(code) > -1) return useMultiplier ? 1.5 : 1;
-  // Unknown code: treat as working day
+  if (["A", "B", "D", "N", "M"].indexOf(code) > -1) return 1.5;
+  // Unknown working code → 1 (same as G)
   return 1;
 }
 
-/**
- * Default code when no roster: Mon–Fri = G, Sat–Sun = O
- */
+/** No roster: Mon–Fri = G, Sat–Sun = O */
 function defaultShiftCode_(dateObj) {
-  var day = dateObj.getDay(); // 0=Sun ... 6=Sat
+  var day = dateObj.getDay();
   return (day === 0 || day === 6) ? "O" : "G";
 }
 
 /**
  * Core utilization for a date range.
- * @param {string} empId
- * @param {Date|string} startDate
- * @param {Date|string} endDate
- * @param {string} [leaveType] - used to pick Calculation Method + Multiplier
+ * Matches official example: D,D,O,O,G → ShiftRoaster 4 / ActualDays 5
  */
 function calculateLeaveUtilize(empId, startDate, endDate, leaveType) {
   var sDate = new Date(startDate);
@@ -115,9 +115,10 @@ function calculateLeaveUtilize(empId, startDate, endDate, leaveType) {
   var meta = getLeaveCalcMeta_(leaveType || "Annual Leave");
   var inclusive = Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
 
+  // Actual Days: every calendar day counts as 1 (O included)
   if (meta.method === "ActualDays") return inclusive;
 
-  // ShiftRoaster path
+  // Shift Roaster: sum official multipliers day by day
   var shiftMap = (typeof loadShiftMapForEmp_ === "function") ? loadShiftMapForEmp_(empId) : {};
   var total = 0;
   var curr = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate());
@@ -127,16 +128,12 @@ function calculateLeaveUtilize(empId, startDate, endDate, leaveType) {
     var key = formatDateKey(curr);
     var code = shiftMap[key];
     if (!code) code = defaultShiftCode_(curr);
-    total += shiftDayWeight_(code, meta.useMultiplier);
+    total += shiftRoasterWeight_(code);
     curr.setDate(curr.getDate() + 1);
   }
   return total;
 }
 
-/**
- * Batch recalculation for all tblLeave (admin / scheduled).
- * Preserves prior split/carry logic where possible.
- */
 function calculateLeaveUtilized() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var leaveSheet = ss.getSheetByName("tblLeave");
