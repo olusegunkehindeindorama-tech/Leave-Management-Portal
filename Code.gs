@@ -1,6 +1,4 @@
-/**
- * SERVE THE WEB APP
- */
+/** SERVE THE WEB APP */
 function doGet(e) {
   return HtmlService.createTemplateFromFile('Index')
       .evaluate()
@@ -9,90 +7,46 @@ function doGet(e) {
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-/**
- * AUTHENTICATE USER
- * User ID case-insensitive, Password case-sensitive.
- * Admin = Full Name "Olusegun Kehinde"
- */
 function loginUser(userId, password) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var userSheet = ss.getSheetByName('userData');
   if (!userSheet) return { success: false, message: "System Error: userData sheet missing." };
-
   var data = userSheet.getDataRange().getValues();
   var searchId = String(userId).trim().toLowerCase();
-
   for (var i = 1; i < data.length; i++) {
-    var dbUser = String(data[i][0]).trim().toLowerCase();
-    var dbPass = String(data[i][1]).trim();
-    var dbName = String(data[i][2]).trim();
-
-    if (dbUser === searchId && dbPass === String(password)) {
-      return {
-        success: true,
-        user: {
-          id: String(data[i][0]).trim(),
-          name: dbName,
-          role: (dbName.toLowerCase() === 'olusegun kehinde') ? 'admin' : 'standard'
-        }
-      };
+    if (String(data[i][0]).trim().toLowerCase() === searchId && String(data[i][1]).trim() === String(password)) {
+      var dbName = String(data[i][2]).trim();
+      return { success: true, user: { id: String(data[i][0]).trim(), name: dbName, role: dbName.toLowerCase() === 'olusegun kehinde' ? 'admin' : 'standard' } };
     }
   }
   return { success: false, message: "Invalid User ID or Password." };
 }
 
-/**
- * Returns the security question for a user (for self-service password reset).
- * userData columns: User ID | Password | Full Name | Question | Answer
- */
 function getSecurityQuestion(userId) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var userSheet = ss.getSheetByName('userData');
-  if (!userSheet) return { success: false, message: "userData sheet missing." };
-
-  var data = userSheet.getDataRange().getValues();
+  var data = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('userData').getDataRange().getValues();
   var searchId = String(userId).trim().toLowerCase();
-
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][0]).trim().toLowerCase() === searchId) {
-      var question = String(data[i][3] || "").trim();
-      if (!question) {
-        return { success: false, message: "No security question set for this account. Contact Mr. Olusegun Kehinde." };
-      }
-      return { success: true, question: question, userId: String(data[i][0]).trim() };
+      var q = String(data[i][3] || '').trim();
+      if (!q) return { success: false, message: "No security question set. Contact Mr. Olusegun Kehinde." };
+      return { success: true, question: q, userId: String(data[i][0]).trim() };
     }
   }
   return { success: false, message: "User ID not found." };
 }
 
-/**
- * Resets password to lowercase(userId) if the answer matches (case-insensitive).
- */
 function resetPasswordWithAnswer(userId, answer) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var userSheet = ss.getSheetByName('userData');
-  if (!userSheet) return { success: false, message: "userData sheet missing." };
-
-  var data = userSheet.getDataRange().getValues();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('userData');
+  var data = sheet.getDataRange().getValues();
   var searchId = String(userId).trim().toLowerCase();
-  var supplied = String(answer || "").trim().toLowerCase();
-
+  var supplied = String(answer || '').trim().toLowerCase();
   for (var i = 1; i < data.length; i++) {
     if (String(data[i][0]).trim().toLowerCase() === searchId) {
-      var storedAnswer = String(data[i][4] || "").trim().toLowerCase();
-      if (!storedAnswer) {
-        return { success: false, message: "No security answer on file. Contact Mr. Olusegun Kehinde." };
-      }
-      if (storedAnswer !== supplied) {
+      if (String(data[i][4] || '').trim().toLowerCase() !== supplied)
         return { success: false, message: "Incorrect answer. Password was not changed." };
-      }
-      var originalId = String(data[i][0]).trim();
-      var newPass = originalId.toLowerCase();
-      userSheet.getRange(i + 1, 2).setValue(newPass); // Password column B
-      return {
-        success: true,
-        message: "Password reset successfully. Your new password is the lowercase of your User ID (" + newPass + "). Please log in and change it if needed."
-      };
+      var newPass = String(data[i][0]).trim().toLowerCase();
+      sheet.getRange(i + 1, 2).setValue(newPass);
+      return { success: true, message: "Password reset to lowercase User ID: " + newPass };
     }
   }
   return { success: false, message: "User ID not found." };
@@ -106,118 +60,74 @@ function getHeaderIndex_(headers, names) {
   return -1;
 }
 
-function getRowValue_(row, headers, names) {
-  var idx = getHeaderIndex_(headers, names);
-  return idx === -1 ? "" : row[idx];
-}
-
+/** Fast form payload: cached emp + single-emp balance */
 function getEmployeeForForm(empId) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var empSheet = ss.getSheetByName('tblEmployee') || ss.getSheetByName('tblemployee');
-  if (!empSheet) return { error: "Employee sheet not found." };
-
-  var data = empSheet.getDataRange().getValues();
-  if (data.length < 2) return { error: "Employee sheet has no employee records." };
-
-  var headers = data[0].map(function(h) { return String(h).trim(); });
-  var idIdx = getHeaderIndex_(headers, ["Emp ID", "Employee ID", "Emp No"]);
-  if (idIdx === -1) return { error: "Employee ID column not found on tblEmployee." };
-
   var search = String(empId).trim().toUpperCase();
-  var exactMatch = null;
-  var partialMatches = [];
-
-  for (var i = 1; i < data.length; i++) {
-    var rowId = String(data[i][idIdx]).trim().toUpperCase();
-    if (!rowId) continue;
-    if (rowId === search) { exactMatch = data[i]; break; }
-    if (rowId.toLowerCase().indexOf(search.toLowerCase()) !== -1) partialMatches.push(data[i]);
-  }
-
-  var empRow = exactMatch || (partialMatches.length === 1 ? partialMatches[0] : null);
-  if (!empRow) {
-    return { error: partialMatches.length > 1 ? "Multiple employees match that text. Please select one from the suggestions." : "Employee ID not found." };
+  var empMap = loadEmployeeMapCached_();
+  var emp = empMap[search];
+  if (!emp) {
+    // partial unique match
+    var partials = [];
+    Object.keys(empMap).forEach(function(id) {
+      if (id === '_headers') return;
+      if (id.indexOf(search) !== -1) partials.push(id);
+    });
+    if (partials.length === 1) emp = empMap[partials[0]];
+    else if (partials.length > 1) return { error: "Multiple employees match. Select from suggestions." };
+    else return { error: "Employee ID not found." };
   }
 
   var empData = {
-    id: String(getRowValue_(empRow, headers, ["Emp ID", "Employee ID", "Emp No"])).trim().toUpperCase(),
-    name: String(getRowValue_(empRow, headers, ["Emp Name", "Employee Name", "Name"])).trim(),
-    dept: String(getRowValue_(empRow, headers, ["Department", "Dept"])).trim(),
-    category: String(getRowValue_(empRow, headers, ["Category"])).trim(),
-    bu: String(getRowValue_(empRow, headers, ["Business Unit", "BU"])).trim()
+    id: String(emp['Emp ID'] || search).trim().toUpperCase(),
+    name: String(emp['Emp Name'] || '').trim(),
+    dept: String(emp['Department'] || '').trim(),
+    category: String(emp['Category'] || '').trim(),
+    bu: String(emp['Business Unit'] || '').trim()
   };
 
   var balancePayload = apiGetEmployeeBalance(empData.id);
   if (balancePayload.error) return balancePayload;
 
   var balances = [];
+  // Show on balance table only where Balance Page Show = Yes; dropdown gets ALL entitled
   Object.keys(balancePayload.balances || {}).forEach(function(type) {
+    var d = (balancePayload.detail && balancePayload.detail[type]) ? balancePayload.detail[type] : {};
     balances.push({
       type: type,
       entitlement: balancePayload.entitlements[type],
       utilized: balancePayload.usage[type] || 0,
       balance: balancePayload.balances[type],
-      detail: (balancePayload.detail && balancePayload.detail[type]) ? balancePayload.detail[type] : null
+      detail: d,
+      show: d.show !== false
     });
   });
 
-  return { profile: empData, balances: balances };
+  return {
+    profile: empData,
+    balances: balances,
+    entitledTypes: balancePayload.entitledTypes || Object.keys(balancePayload.balances || {})
+  };
 }
 
 function searchEmployees(query, limit) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var empSheet = ss.getSheetByName('tblEmployee') || ss.getSheetByName('tblemployee');
-  if (!empSheet) return [];
-
-  var data = empSheet.getDataRange().getValues();
-  if (data.length < 2) return [];
-
-  var headers = data[0].map(function(h) { return String(h).trim(); });
-  var idIdx = getHeaderIndex_(headers, ["Emp ID", "Employee ID", "Emp No"]);
-  var nameIdx = getHeaderIndex_(headers, ["Emp Name", "Employee Name", "Name"]);
-  var deptIdx = getHeaderIndex_(headers, ["Department", "Dept"]);
-  if (idIdx === -1) return [];
-
-  var needle = String(query || "").trim().toLowerCase();
+  var empMap = loadEmployeeMapCached_();
+  var needle = String(query || '').trim().toLowerCase();
   var max = Number(limit) || 10;
   var matches = [];
-
-  for (var i = 1; i < data.length && matches.length < max; i++) {
-    var id = String(data[i][idIdx]).trim();
-    if (!id) continue;
+  Object.keys(empMap).forEach(function(id) {
+    if (id === '_headers' || matches.length >= max) return;
     if (id.toLowerCase().indexOf(needle) !== -1) {
-      matches.push({
-        id: id,
-        name: nameIdx === -1 ? "" : String(data[i][nameIdx]).trim(),
-        department: deptIdx === -1 ? "" : String(data[i][deptIdx]).trim()
-      });
+      var e = empMap[id];
+      matches.push({ id: id, name: String(e['Emp Name'] || ''), department: String(e['Department'] || '') });
     }
-  }
+  });
   return matches;
-}
-
-function getEmployeeIds() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheet = ss.getSheetByName('tblEmployee') || ss.getSheetByName('tblemployee');
-  if (!sheet) return [];
-  var data = sheet.getDataRange().getValues();
-  if (data.length < 2) return [];
-  var headers = data[0].map(function(h) { return String(h).trim(); });
-  var idIdx = getHeaderIndex_(headers, ["Emp ID", "Employee ID", "Emp No"]);
-  if (idIdx === -1) return [];
-  var ids = [];
-  for (var i = 1; i < data.length; i++) {
-    var id = String(data[i][idIdx]).trim();
-    if (id) ids.push(id);
-  }
-  return ids;
 }
 
 function submitLeaveRequest(formData, userSession) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tblLeave = ss.getSheetByName('tblLeave');
-  var policySheet = ss.getSheetByName('Sys_LeavePolicies');
-  if (!tblLeave) return { success: false, message: "Error: tblLeave sheet missing." };
+  if (!tblLeave) return { success: false, message: "tblLeave missing." };
 
   var leaveData = tblLeave.getDataRange().getValues();
   var headers = leaveData[0].map(function(h) { return String(h).trim(); });
@@ -225,350 +135,220 @@ function submitLeaveRequest(formData, userSession) {
   var nameParts = String(userSession.name).trim().split(/\s+/);
   var initials = nameParts.length >= 2
     ? (nameParts[0].charAt(0) + nameParts[1].charAt(0)).toUpperCase()
-    : (nameParts[0] ? nameParts[0].substring(0, 2).toUpperCase() : "XX");
+    : (nameParts[0] ? nameParts[0].substring(0, 2).toUpperCase() : 'XX');
 
-  var entryCodeIdx = headers.indexOf("Entry Code");
+  var entryCodeIdx = headers.indexOf('Entry Code');
   var maxSerial = 0;
   for (var i = 1; i < leaveData.length; i++) {
-    var code = String(leaveData[i][entryCodeIdx]).trim();
-    var match = code.match(/^[A-Z]+-(\d+)$/);
-    if (match) {
-      var num = parseInt(match[1], 10);
-      if (num > maxSerial) maxSerial = num;
-    }
+    var m = String(leaveData[i][entryCodeIdx]).trim().match(/^[A-Z]+-(\d+)$/);
+    if (m) { var n = parseInt(m[1], 10); if (n > maxSerial) maxSerial = n; }
   }
-  var newEntryCode = initials + "-" + (maxSerial === 0 ? 1000 : maxSerial + 1);
+  var newEntryCode = initials + '-' + (maxSerial === 0 ? 1000 : maxSerial + 1);
 
-  var sysLeaveCode = "";
-  if (policySheet) {
-    var pData = policySheet.getDataRange().getValues();
-    var pHeaders = pData[0].map(function(h) { return String(h).trim(); });
-    var pTypeIdx = pHeaders.indexOf("Leave Type");
-    var pCodeIdx = pHeaders.indexOf("DB Leave Code");
-    if (pCodeIdx === -1) pCodeIdx = pHeaders.indexOf("Leave Code");
-    for (var p = 1; p < pData.length; p++) {
-      if (String(pData[p][pTypeIdx]).trim() === formData.leaveType) {
-        sysLeaveCode = pCodeIdx !== -1 ? String(pData[p][pCodeIdx]).trim() : "";
-        break;
-      }
+  var sysLeaveCode = '';
+  var policies = loadPoliciesCached_();
+  for (var p = 0; p < policies.length; p++) {
+    if (String(policies[p]['Leave Type'] || '').trim() === formData.leaveType) {
+      sysLeaveCode = String(policies[p]['DB Leave Code'] || '').trim();
+      break;
     }
   }
 
   var sDate = new Date(formData.startDate);
   var eDate = new Date(formData.endDate);
-  var noOfDays = Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-  var entitlementYear = sDate.getFullYear();
-
+  var noOfDays = Math.round((eDate - sDate) / 86400000) + 1;
   var utilized = 0;
-  try { utilized = calculateLeaveUtilize(formData.empId, sDate, eDate); }
+  try { utilized = calculateLeaveUtilize(formData.empId, sDate, eDate, formData.leaveType); }
   catch (e) { utilized = noOfDays; }
 
-  if (utilized > formData.availableBalance) {
-    return { success: false, message: "Rejected: Required leave days (" + utilized + ") exceeds available balance." };
+  if (formData.availableBalance !== 'Unlimited' && utilized > Number(formData.availableBalance)) {
+    return { success: false, message: 'Rejected: required days (' + utilized + ') exceed available balance.' };
   }
 
   var rowObj = {
-    "Entry Code": newEntryCode,
-    "Leave Code": sysLeaveCode,
-    "Emp ID": formData.empId,
-    "Emp Name": formData.empName,
-    "Department": formData.dept,
-    "Category": formData.category,
-    "Leave Type": formData.leaveType,
-    "Start Date": sDate,
-    "End Date": eDate,
-    "Leave Reason": formData.leaveReason,
-    "No of Days": noOfDays,
-    "Leave Utilized": utilized,
-    "Entitlement Year": entitlementYear,
-    "Date Entered": new Date(),
-    "Entered By": userSession.name,
-    "Date Modified": "",
-    "Modified By": "",
-    "BU": formData.bu,
-    "DB Remark": "Not Uploaded",
-    "Upload Date": "",
-    "Uploaded By": ""
+    'Entry Code': newEntryCode, 'Leave Code': sysLeaveCode, 'Emp ID': formData.empId,
+    'Emp Name': formData.empName, 'Department': formData.dept, 'Category': formData.category,
+    'Leave Type': formData.leaveType, 'Start Date': sDate, 'End Date': eDate,
+    'Leave Reason': formData.leaveReason, 'No of Days': noOfDays, 'Leave Utilized': utilized,
+    'Entitlement Year': sDate.getFullYear(), 'Date Entered': new Date(), 'Entered By': userSession.name,
+    'Date Modified': '', 'Modified By': '', 'BU': formData.bu, 'DB Remark': 'Not Uploaded',
+    'Upload Date': '', 'Uploaded By': ''
   };
-
-  var rowToAppend = headers.map(function(h) {
-    return rowObj[h] !== undefined ? rowObj[h] : "";
-  });
-  tblLeave.appendRow(rowToAppend);
-  return { success: true, message: "Leave successfully recorded as " + newEntryCode };
+  tblLeave.appendRow(headers.map(function(h) { return rowObj[h] !== undefined ? rowObj[h] : ''; }));
+  invalidateEmpCaches_(formData.empId);
+  return { success: true, message: 'Leave recorded as ' + newEntryCode + ' (utilized ' + utilized + ' days)' };
 }
 
 function getEmployeeLeaveHistory(empId) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var tblLeave = ss.getSheetByName('tblLeave');
-  if (!tblLeave) return [];
-
-  var data = tblLeave.getDataRange().getValues();
-  var headers = data.shift().map(function(h) { return String(h).trim(); });
-
-  var empIdx = headers.indexOf("Emp ID");
-  var entryCodeIdx = headers.indexOf("Entry Code");
-  var typeIdx = headers.indexOf("Leave Type");
-  var startIdx = headers.indexOf("Start Date");
-  var endIdx = headers.indexOf("End Date");
-  var reasonIdx = headers.indexOf("Leave Reason");
-  var statusIdx = headers.indexOf("DB Remark");
-
-  var history = [];
-  for (var i = 0; i < data.length; i++) {
-    if (String(data[i][empIdx]).trim().toUpperCase() === String(empId).trim().toUpperCase()) {
-      history.push({
-        entryCode: data[i][entryCodeIdx],
-        type: data[i][typeIdx],
-        startDate: data[i][startIdx],
-        endDate: data[i][endIdx],
-        reason: data[i][reasonIdx],
-        status: data[i][statusIdx]
-      });
-    }
-  }
+  var rows = loadLeaveRowsForEmp_(empId);
+  var history = rows.map(function(r) {
+    return {
+      entryCode: r['Entry Code'],
+      empId: r['Emp ID'],
+      empName: r['Emp Name'],
+      type: r['Leave Type'],
+      startDate: r['Start Date'],
+      endDate: r['End Date'],
+      noOfDays: r['No of Days'],
+      entitlementYear: r['Entitlement Year'],
+      utilized: r['Leave Utilized'],
+      reason: r['Leave Reason'],
+      status: r['DB Remark']
+    };
+  });
   history.sort(function(a, b) { return new Date(b.startDate) - new Date(a.startDate); });
   return history;
 }
 
 function updateLeaveRecord(updateData, userSession) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var tblLeave = ss.getSheetByName('tblLeave');
+  var tblLeave = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('tblLeave');
   var data = tblLeave.getDataRange().getValues();
   var headers = data[0].map(function(h) { return String(h).trim(); });
-  var entryCodeIdx = headers.indexOf("Entry Code");
-
-  var targetRowIdx = -1;
+  var entryCodeIdx = headers.indexOf('Entry Code');
+  var target = -1;
   for (var i = 1; i < data.length; i++) {
-    if (String(data[i][entryCodeIdx]).trim() === updateData.entryCode) {
-      targetRowIdx = i + 1;
-      break;
-    }
+    if (String(data[i][entryCodeIdx]).trim() === updateData.entryCode) { target = i + 1; break; }
   }
-  if (targetRowIdx === -1) return { success: false, message: "Record not found." };
+  if (target < 0) return { success: false, message: 'Record not found.' };
 
   var sDate = new Date(updateData.startDate);
   var eDate = new Date(updateData.endDate);
-  var noOfDays = Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+  var noOfDays = Math.round((eDate - sDate) / 86400000) + 1;
+  var type = String(data[target - 1][headers.indexOf('Leave Type')] || '');
   var utilized = 0;
-  try { utilized = calculateLeaveUtilize(updateData.empId, sDate, eDate); }
+  try { utilized = calculateLeaveUtilize(updateData.empId, sDate, eDate, type); }
   catch (e) { utilized = noOfDays; }
 
-  [
-    { col: "Start Date", val: sDate },
-    { col: "End Date", val: eDate },
-    { col: "Leave Reason", val: updateData.leaveReason },
-    { col: "No of Days", val: noOfDays },
-    { col: "Leave Utilized", val: utilized },
-    { col: "Date Modified", val: new Date() },
-    { col: "Modified By", val: userSession.name }
+  [{ col: 'Start Date', val: sDate }, { col: 'End Date', val: eDate }, { col: 'Leave Reason', val: updateData.leaveReason },
+   { col: 'No of Days', val: noOfDays }, { col: 'Leave Utilized', val: utilized },
+   { col: 'Date Modified', val: new Date() }, { col: 'Modified By', val: userSession.name }
   ].forEach(function(u) {
-    var colIdx = headers.indexOf(u.col);
-    if (colIdx > -1) tblLeave.getRange(targetRowIdx, colIdx + 1).setValue(u.val);
+    var c = headers.indexOf(u.col);
+    if (c > -1) tblLeave.getRange(target, c + 1).setValue(u.val);
   });
-
-  return { success: true, message: "Record " + updateData.entryCode + " updated successfully." };
+  invalidateEmpCaches_(updateData.empId);
+  return { success: true, message: 'Record ' + updateData.entryCode + ' updated.' };
 }
 
 function buildBalanceReportCsv(buFilter, deptFilter) {
   return arrayToCsv_(generateReportArray(buFilter || null, deptFilter || null));
 }
 
-/**
- * Filterable leave records for Reports module.
- * filters: { empId, bu, dept, leaveType, fromDate, toDate, dbRemark, limit }
- */
 function getLeaveRecordsFiltered(filters) {
   filters = filters || {};
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var tblLeave = ss.getSheetByName('tblLeave');
-  if (!tblLeave) return { rows: [], total: 0 };
-
-  var data = tblLeave.getDataRange().getValues();
+  var data = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('tblLeave').getDataRange().getValues();
   var headers = data.shift().map(function(h) { return String(h).trim(); });
-
   var idx = {
-    entry: headers.indexOf("Entry Code"),
-    emp: headers.indexOf("Emp ID"),
-    name: headers.indexOf("Emp Name"),
-    dept: headers.indexOf("Department"),
-    bu: headers.indexOf("BU"),
-    type: headers.indexOf("Leave Type"),
-    start: headers.indexOf("Start Date"),
-    end: headers.indexOf("End Date"),
-    util: headers.indexOf("Leave Utilized"),
-    remark: headers.indexOf("DB Remark"),
-    enteredBy: headers.indexOf("Entered By")
+    entry: headers.indexOf('Entry Code'), emp: headers.indexOf('Emp ID'), name: headers.indexOf('Emp Name'),
+    dept: headers.indexOf('Department'), bu: headers.indexOf('BU'), type: headers.indexOf('Leave Type'),
+    start: headers.indexOf('Start Date'), end: headers.indexOf('End Date'), util: headers.indexOf('Leave Utilized'),
+    remark: headers.indexOf('DB Remark'), enteredBy: headers.indexOf('Entered By')
   };
-
   var fromD = filters.fromDate ? new Date(filters.fromDate) : null;
   var toD = filters.toDate ? new Date(filters.toDate) : null;
   var limit = Number(filters.limit) || 500;
   var rows = [];
-
-  for (var i = 0; i < data.length; i++) {
+  for (var i = 0; i < data.length && rows.length < limit; i++) {
     var r = data[i];
-    var empId = String(r[idx.emp] || "").trim().toUpperCase();
-    if (filters.empId && empId.indexOf(String(filters.empId).trim().toUpperCase()) === -1) continue;
-    if (filters.bu && String(r[idx.bu] || "").trim().toUpperCase() !== String(filters.bu).trim().toUpperCase()) continue;
-    if (filters.dept && String(r[idx.dept] || "").trim().toUpperCase() !== String(filters.dept).trim().toUpperCase()) continue;
-    if (filters.leaveType && String(r[idx.type] || "").trim() !== String(filters.leaveType).trim()) continue;
-    if (filters.dbRemark && String(r[idx.remark] || "").trim().toLowerCase().indexOf(String(filters.dbRemark).trim().toLowerCase()) === -1) continue;
-
+    var empId = String(r[idx.emp] || '').trim().toUpperCase();
+    if (filters.empId && empId.indexOf(String(filters.empId).toUpperCase()) === -1) continue;
+    if (filters.bu && String(r[idx.bu]).toUpperCase() !== String(filters.bu).toUpperCase()) continue;
+    if (filters.dept && String(r[idx.dept]).toUpperCase() !== String(filters.dept).toUpperCase()) continue;
+    if (filters.leaveType && String(r[idx.type]).trim() !== String(filters.leaveType).trim()) continue;
+    if (filters.dbRemark && String(r[idx.remark]).toLowerCase().indexOf(String(filters.dbRemark).toLowerCase()) === -1) continue;
     var sDate = new Date(r[idx.start]);
-    if (fromD && !isNaN(fromD.getTime()) && (isNaN(sDate.getTime()) || sDate < fromD)) continue;
-    if (toD && !isNaN(toD.getTime()) && (isNaN(sDate.getTime()) || sDate > toD)) continue;
-
-    rows.push({
-      entryCode: r[idx.entry],
-      empId: empId,
-      empName: r[idx.name],
-      department: r[idx.dept],
-      bu: r[idx.bu],
-      leaveType: r[idx.type],
-      startDate: r[idx.start],
-      endDate: r[idx.end],
-      utilized: r[idx.util],
-      dbRemark: r[idx.remark],
-      enteredBy: r[idx.enteredBy]
-    });
-
-    if (rows.length >= limit) break;
+    if (fromD && !isNaN(fromD) && (isNaN(sDate) || sDate < fromD)) continue;
+    if (toD && !isNaN(toD) && (isNaN(sDate) || sDate > toD)) continue;
+    rows.push({ entryCode: r[idx.entry], empId: empId, empName: r[idx.name], department: r[idx.dept], bu: r[idx.bu],
+      leaveType: r[idx.type], startDate: r[idx.start], endDate: r[idx.end], utilized: r[idx.util],
+      dbRemark: r[idx.remark], enteredBy: r[idx.enteredBy] });
   }
-
-  return { rows: rows, total: rows.length, headers: headers };
+  return { rows: rows, total: rows.length };
 }
 
 function buildLeaveRecordsCsv(filters) {
   var result = getLeaveRecordsFiltered(filters || {});
-  var out = [["Entry Code", "Emp ID", "Emp Name", "Department", "BU", "Leave Type", "Start Date", "End Date", "Leave Utilized", "DB Remark", "Entered By"]];
+  var out = [['Entry Code', 'Emp ID', 'Emp Name', 'Department', 'BU', 'Leave Type', 'Start Date', 'End Date', 'Leave Utilized', 'DB Remark', 'Entered By']];
   result.rows.forEach(function(r) {
-    out.push([
-      r.entryCode, r.empId, r.empName, r.department, r.bu, r.leaveType,
-      r.startDate instanceof Date ? Utilities.formatDate(r.startDate, Session.getScriptTimeZone(), "yyyy-MM-dd") : r.startDate,
-      r.endDate instanceof Date ? Utilities.formatDate(r.endDate, Session.getScriptTimeZone(), "yyyy-MM-dd") : r.endDate,
-      r.utilized, r.dbRemark, r.enteredBy
-    ]);
+    out.push([r.entryCode, r.empId, r.empName, r.department, r.bu, r.leaveType,
+      r.startDate instanceof Date ? Utilities.formatDate(r.startDate, Session.getScriptTimeZone(), 'yyyy-MM-dd') : r.startDate,
+      r.endDate instanceof Date ? Utilities.formatDate(r.endDate, Session.getScriptTimeZone(), 'yyyy-MM-dd') : r.endDate,
+      r.utilized, r.dbRemark, r.enteredBy]);
   });
   return arrayToCsv_(out);
 }
 
-/**
- * Shift calendar for one employee + month.
- * Returns { year, month, days: [{ date, shift, dayOfWeek }] }
- */
+/** Shift calendar + leave overlays for the month */
 function getShiftCalendar(empId, year, month) {
-  // month is 1-12
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var shiftSheet = ss.getSheetByName('tblShift');
-  if (!shiftSheet) return { error: "tblShift not found", days: [] };
-
   year = Number(year) || new Date().getFullYear();
   month = Number(month) || (new Date().getMonth() + 1);
-
-  var data = shiftSheet.getDataRange().getValues();
-  if (data.length < 2) return { year: year, month: month, empId: empId, days: [] };
-
-  var headers = data[0].map(function(h) { return String(h).trim(); });
-  var empIdx = getHeaderIndex_(headers, ["Emp ID", "Employee ID", "Emp No"]);
-  var dateIdx = getHeaderIndex_(headers, ["Date", "Shift Date"]);
-  var codeIdx = getHeaderIndex_(headers, ["Shift", "Shift Code", "Code"]);
-  if (empIdx === -1) empIdx = 0;
-  if (dateIdx === -1) dateIdx = 1;
-  if (codeIdx === -1) codeIdx = 2;
-
   var target = String(empId).trim().toUpperCase();
-  var map = {};
+  var shiftMap = loadShiftMapForEmp_(target);
+  var leaveRows = loadLeaveRowsForEmp_(target);
 
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][empIdx]).trim().toUpperCase() !== target) continue;
-    var d = new Date(data[i][dateIdx]);
-    if (isNaN(d.getTime())) continue;
-    if (d.getFullYear() !== year || (d.getMonth() + 1) !== month) continue;
-    map[Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd")] = String(data[i][codeIdx]).trim();
-  }
+  var leaveByDate = {};
+  leaveRows.forEach(function(r) {
+    var s = new Date(r['Start Date']);
+    var e = new Date(r['End Date']);
+    if (isNaN(s) || isNaN(e)) return;
+    var cur = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+    var end = new Date(e.getFullYear(), e.getMonth(), e.getDate());
+    while (cur <= end) {
+      if (cur.getFullYear() === year && (cur.getMonth() + 1) === month) {
+        var k = formatDateKey(cur);
+        if (!leaveByDate[k]) leaveByDate[k] = [];
+        leaveByDate[k].push(String(r['Leave Type'] || 'Leave'));
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+  });
 
   var daysInMonth = new Date(year, month, 0).getDate();
   var days = [];
   for (var day = 1; day <= daysInMonth; day++) {
     var dt = new Date(year, month - 1, day);
-    var key = Utilities.formatDate(dt, Session.getScriptTimeZone(), "yyyy-MM-dd");
+    var key = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'yyyy-MM-dd');
     days.push({
       date: key,
       day: day,
-      dayOfWeek: dt.getDay(), // 0=Sun
-      shift: map[key] || ""
+      dayOfWeek: dt.getDay(),
+      shift: shiftMap[key] || '',
+      leaves: leaveByDate[key] || []
     });
   }
-
   return { year: year, month: month, empId: target, days: days };
 }
 
-/**
- * Update or insert a single shift cell for an employee on a date.
- */
 function updateShiftCode(empId, dateStr, shiftCode, userSession) {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var shiftSheet = ss.getSheetByName('tblShift');
-  if (!shiftSheet) return { success: false, message: "tblShift not found." };
-
+  var shiftSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('tblShift');
+  if (!shiftSheet) return { success: false, message: 'tblShift not found.' };
   var data = shiftSheet.getDataRange().getValues();
-  var headers = data[0].map(function(h) { return String(h).trim(); });
-  var empIdx = getHeaderIndex_(headers, ["Emp ID", "Employee ID", "Emp No"]);
-  var dateIdx = getHeaderIndex_(headers, ["Date", "Shift Date"]);
-  var codeIdx = getHeaderIndex_(headers, ["Shift", "Shift Code", "Code"]);
-  if (empIdx === -1) empIdx = 0;
-  if (dateIdx === -1) dateIdx = 1;
-  if (codeIdx === -1) codeIdx = 2;
-
   var target = String(empId).trim().toUpperCase();
-  var targetDate = new Date(dateStr);
-  if (isNaN(targetDate.getTime())) return { success: false, message: "Invalid date." };
-
-  var targetKey = Utilities.formatDate(targetDate, Session.getScriptTimeZone(), "yyyy-MM-dd");
-  var foundRow = -1;
-
+  var targetKey = Utilities.formatDate(new Date(dateStr), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  var found = -1;
   for (var i = 1; i < data.length; i++) {
-    if (String(data[i][empIdx]).trim().toUpperCase() !== target) continue;
-    var d = new Date(data[i][dateIdx]);
-    if (isNaN(d.getTime())) continue;
-    if (Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd") === targetKey) {
-      foundRow = i + 1;
-      break;
-    }
+    if (String(data[i][0]).trim().toUpperCase() !== target) continue;
+    var d = new Date(data[i][1]);
+    if (!isNaN(d) && Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd') === targetKey) { found = i + 1; break; }
   }
-
-  var code = String(shiftCode || "").trim().toUpperCase();
-
-  if (foundRow > -1) {
-    if (code === "") {
-      shiftSheet.deleteRow(foundRow);
-      return { success: true, message: "Shift cleared for " + targetKey };
-    }
-    shiftSheet.getRange(foundRow, codeIdx + 1).setValue(code);
-    return { success: true, message: "Shift updated to " + code + " on " + targetKey };
+  var code = String(shiftCode || '').trim().toUpperCase();
+  if (found > -1) {
+    if (!code) { shiftSheet.deleteRow(found); invalidateEmpCaches_(target); return { success: true, message: 'Shift cleared' }; }
+    shiftSheet.getRange(found, 3).setValue(code);
+    invalidateEmpCaches_(target);
+    return { success: true, message: 'Shift updated to ' + code };
   }
-
-  if (code === "") return { success: true, message: "No existing shift to clear." };
-
-  // Append new row — keep column order Emp ID, Date, Shift
-  var newRow = ["", "", ""];
-  newRow[empIdx] = target;
-  newRow[dateIdx] = targetKey;
-  newRow[codeIdx] = code;
-  // Ensure length 3
-  while (newRow.length < 3) newRow.push("");
-  shiftSheet.appendRow(newRow.slice(0, 3));
-  return { success: true, message: "Shift added: " + code + " on " + targetKey };
+  if (!code) return { success: true, message: 'Nothing to clear' };
+  shiftSheet.appendRow([target, targetKey, code]);
+  invalidateEmpCaches_(target);
+  return { success: true, message: 'Shift added: ' + code };
 }
 
 function arrayToCsv_(rows) {
   return rows.map(function(row) {
     return row.map(function(cell) {
-      var cellStr = String(cell === null || cell === undefined ? "" : cell);
-      if (cellStr.indexOf(',') > -1 || cellStr.indexOf('\n') > -1 || cellStr.indexOf('"') > -1) {
-        return '"' + cellStr.replace(/"/g, '""') + '"';
-      }
+      var cellStr = String(cell == null ? '' : cell);
+      if (/[",\n]/.test(cellStr)) return '"' + cellStr.replace(/"/g, '""') + '"';
       return cellStr;
     }).join(',');
   }).join('\n');
