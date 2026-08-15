@@ -1,16 +1,11 @@
 /**
  * IN-MEMORY LEAVE BALANCE CALCULATOR
- * Dynamically calculates entitlements, aggregates usage, and computes final balances.
+ * Dynamically calculates entitlements, aggregates usage, and computes final balances
+ * including explicit carry-forward (previous year) breakdown for reports.
  *
- * Matches live Google Sheet headers:
- * - Sys_LeavePolicies: "Balance Page Show" (not "Show in Balance Page")
- * - StartingBal: "Emp No", "2025 Balance" (dynamic prev-year)
- * - tblEmployee / tblLeave exact headers from the sheet
- *
- * @param {string} optEmpId - (Optional) Pass an Emp ID for fast, single-user HTML UI lookup.
- * @param {string} optBU - (Optional) Filter by Business Unit for reporting.
- * @param {string} optDept - (Optional) Filter by Department for reporting.
- * @returns {Object} A structured object containing employee details, entitlements, usage, and balances.
+ * Live headers:
+ * - Sys_LeavePolicies: "Balance Page Show", "Carry Forward Deadline"
+ * - StartingBal: "Emp No", "{prevYear} Balance"
  */
 function getLeaveBalancesData(optEmpId, optBU, optDept) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -28,13 +23,9 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
   var currentYear = today.getFullYear();
   var prevYear = currentYear - 1;
 
-  // ==========================================
-  // 2. PARSE POLICIES & VISIBILITY RULES
-  // ==========================================
   var policyData = policySheet.getDataRange().getValues();
   var pHeaders = policyData.shift().map(function(h) { return String(h).trim(); });
 
-  // Live sheet header is "Balance Page Show"
   var pCol = {
     bu: pHeaders.indexOf("Business Unit"),
     cat: pHeaders.indexOf("Category"),
@@ -72,9 +63,6 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
     }
   }
 
-  // ==========================================
-  // 3. AGGREGATE LEAVE USAGE (FROM tblLeave)
-  // ==========================================
   var leaveData = leaveSheet.getDataRange().getValues();
   var lHeaders = leaveData.shift().map(function(h) { return String(h).trim(); });
 
@@ -82,7 +70,6 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
   var lTypeIdx = lHeaders.indexOf("Leave Type");
   var lUtilIdx = lHeaders.indexOf("Leave Utilized");
   var lYearIdx = lHeaders.indexOf("Entitlement Year");
-  // tblLeave has no Status column; DB Remark is used for upload state
   var lStatusIdx = lHeaders.indexOf("Status");
 
   var usageMap = {};
@@ -90,25 +77,20 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
   for (var l = 0; l < leaveData.length; l++) {
     var row = leaveData[l];
     var status = lStatusIdx !== -1 ? String(row[lStatusIdx]).trim().toLowerCase() : "approved";
-
     if (status === "rejected" || status === "cancelled") continue;
 
     var eId = String(row[lEmpIdx]).trim().toUpperCase();
-    var lType = String(row[lTypeIdx]).trim();
+    var lt = String(row[lTypeIdx]).trim();
     var utilized = Number(row[lUtilIdx]) || 0;
     var eYear = Number(row[lYearIdx]) || currentYear;
 
     if (!eId) continue;
     if (!usageMap[eId]) usageMap[eId] = {};
-    if (!usageMap[eId][lType]) usageMap[eId][lType] = {};
-    if (!usageMap[eId][lType][eYear]) usageMap[eId][lType][eYear] = 0;
-
-    usageMap[eId][lType][eYear] += utilized;
+    if (!usageMap[eId][lt]) usageMap[eId][lt] = {};
+    if (!usageMap[eId][lt][eYear]) usageMap[eId][lt][eYear] = 0;
+    usageMap[eId][lt][eYear] += utilized;
   }
 
-  // ==========================================
-  // 4. LOAD STARTING BALANCES (PREVIOUS YEAR)
-  // ==========================================
   var carryOverMap = {};
   if (startBalSheet) {
     var sbData = startBalSheet.getDataRange().getValues();
@@ -116,30 +98,22 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
       var sbHeaders = sbData.shift().map(function(h) { return String(h).trim(); });
       var sbEmpIdx = sbHeaders.indexOf("Emp No") !== -1 ? sbHeaders.indexOf("Emp No") : sbHeaders.indexOf("Emp ID");
       var sbBalIdx = sbHeaders.indexOf(prevYear + " Balance");
-
       if (sbEmpIdx !== -1 && sbBalIdx !== -1) {
         for (var b = 0; b < sbData.length; b++) {
-          var eId2 = String(sbData[b][sbEmpIdx]).trim().toUpperCase();
-          carryOverMap[eId2] = Number(sbData[b][sbBalIdx]) || 0;
+          carryOverMap[String(sbData[b][sbEmpIdx]).trim().toUpperCase()] = Number(sbData[b][sbBalIdx]) || 0;
         }
       }
     }
   }
 
-  // ==========================================
-  // 5. CALCULATE ENTITLEMENTS & FINAL BALANCES
-  // ==========================================
   var empData = empSheet.getDataRange().getValues();
   var eHeaders = empData.shift().map(function(h) { return String(h).trim(); });
-
   var outputData = {};
 
   for (var e = 0; e < empData.length; e++) {
     var emp = empData[e];
     var empId = String(emp[eHeaders.indexOf("Emp ID")]).trim().toUpperCase();
-
     if (!empId) continue;
-
     if (optEmpId && empId !== String(optEmpId).trim().toUpperCase()) continue;
 
     var bu = String(emp[eHeaders.indexOf("Business Unit")]).trim();
@@ -160,7 +134,9 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
       profile: { id: empId, name: empName, bu: bu, dept: dept, category: catFull },
       balances: {},
       entitlements: {},
-      usage: {}
+      usage: {},
+      // Detailed carry-forward breakdown for reports
+      detail: {}
     };
 
     for (var i = 0; i < visibleLeaveTypes.length; i++) {
@@ -177,14 +153,11 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
         var scoreCat = checkMatch(catInitials, String(pol[pCol.cat]).trim(), 10);
         var scoreStatus = checkMatch(empStatus, String(pol[pCol.status]).trim(), 5);
         var scoreGender = checkMatch(gender, String(pol[pCol.gender]).trim(), 1);
-
         if (scoreBU === -1 || scoreCat === -1 || scoreStatus === -1 || scoreGender === -1) continue;
 
-        var lifecycleRule = String(pol[pCol.lifecycle]).trim();
-        if (!evaluateLifecycle(doj, lifecycleRule, today)) continue;
+        if (!evaluateLifecycle(doj, String(pol[pCol.lifecycle]).trim(), today)) continue;
 
         var totalScore = scoreBU + scoreCat + scoreStatus + scoreGender;
-
         if (totalScore > bestScore) {
           bestScore = totalScore;
           var entValue = String(pol[pCol.entitlement]).trim();
@@ -196,7 +169,7 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
         }
       }
 
-      if (bestScore < 0) continue; // not entitled under any matching policy
+      if (bestScore < 0) continue;
 
       var currYearUsage = (usageMap[empId] && usageMap[empId][currentLeaveType] && usageMap[empId][currentLeaveType][currentYear]) ? usageMap[empId][currentLeaveType][currentYear] : 0;
       var prevYearUsage = (usageMap[empId] && usageMap[empId][currentLeaveType] && usageMap[empId][currentLeaveType][prevYear]) ? usageMap[empId][currentLeaveType][prevYear] : 0;
@@ -204,15 +177,23 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
       var prevYearAvailable = 0;
       var currentYearAvailable = 0;
       var totalAvailable = 0;
+      var carryExpired = false;
+      var baseCarry = 0;
 
       if (isUnlimited) {
         totalAvailable = "Unlimited";
       } else {
         var deadline = carryDeadlines[currentLeaveType];
+        baseCarry = (currentLeaveType.toLowerCase().indexOf("annual") > -1) ? (carryOverMap[empId] || 0) : 0;
 
         if (deadline && today <= deadline) {
-          var baseCarryForward = (currentLeaveType.toLowerCase().indexOf("annual") > -1) ? (carryOverMap[empId] || 0) : 0;
-          prevYearAvailable = Math.max(0, baseCarryForward - prevYearUsage);
+          prevYearAvailable = Math.max(0, baseCarry - prevYearUsage);
+        } else if (deadline && today > deadline) {
+          carryExpired = true;
+          prevYearAvailable = 0;
+        } else {
+          // No deadline defined: treat carry as available if StartingBal has value
+          prevYearAvailable = Math.max(0, baseCarry - prevYearUsage);
         }
 
         currentYearAvailable = Math.max(0, determinedEntitlement - currYearUsage);
@@ -222,6 +203,17 @@ function getLeaveBalancesData(optEmpId, optBU, optDept) {
       outputData[empId].entitlements[currentLeaveType] = isUnlimited ? "Unlimited" : determinedEntitlement;
       outputData[empId].usage[currentLeaveType] = currYearUsage + prevYearUsage;
       outputData[empId].balances[currentLeaveType] = totalAvailable;
+      outputData[empId].detail[currentLeaveType] = {
+        prevYearBalance: isUnlimited ? "Unlimited" : (carryExpired ? 0 : prevYearAvailable),
+        prevYearGross: baseCarry,
+        prevYearUtilized: prevYearUsage,
+        thisYearEntitlement: isUnlimited ? "Unlimited" : determinedEntitlement,
+        thisYearUtilized: currYearUsage,
+        thisYearBalance: isUnlimited ? "Unlimited" : currentYearAvailable,
+        currentBalance: totalAvailable,
+        carryExpired: carryExpired,
+        carryDeadline: carryDeadlines[currentLeaveType] ? Utilities.formatDate(carryDeadlines[currentLeaveType], Session.getScriptTimeZone(), "yyyy-MM-dd") : ""
+      };
     }
   }
 
@@ -233,24 +225,45 @@ function apiGetEmployeeBalance(empId) {
   return data[empId] ? data[empId] : { error: "Employee Not Found" };
 }
 
+/**
+ * Full carry-forward balance report.
+ * Columns: Emp ID, Name, Dept, BU, Category, then per leave type:
+ *   Prev Year Bal | This Year Entitlement | Utilized This Year | Current Balance
+ * If carry has expired for a type, Prev Year Bal is 0 / omitted logic already applied.
+ */
 function generateReportArray(buFilter, deptFilter) {
   var rawData = getLeaveBalancesData(null, buFilter, deptFilter);
   var leaveTypes = {};
   for (var empId in rawData) {
-    var bals = rawData[empId].balances || {};
-    for (var t in bals) leaveTypes[t] = true;
+    var det = rawData[empId].detail || {};
+    for (var t in det) leaveTypes[t] = true;
   }
   var typeList = Object.keys(leaveTypes).sort();
-  var headers = ["Emp ID", "Name", "Department", "BU", "Category"].concat(typeList.map(function(t) { return t + " Balance"; }));
+
+  var headers = ["Emp ID", "Name", "Department", "BU", "Category"];
+  typeList.forEach(function(t) {
+    headers.push(t + " — Prev Year Bal");
+    headers.push(t + " — This Year Entitlement");
+    headers.push(t + " — Utilized This Year");
+    headers.push(t + " — Current Balance");
+  });
+
   var report = [headers];
 
   for (var id in rawData) {
     var emp = rawData[id];
     var row = [emp.profile.id, emp.profile.name, emp.profile.dept, emp.profile.bu, emp.profile.category];
-    for (var ti = 0; ti < typeList.length; ti++) {
-      var bal = emp.balances[typeList[ti]];
-      row.push(bal === undefined ? "" : bal);
-    }
+    typeList.forEach(function(t) {
+      var d = (emp.detail && emp.detail[t]) ? emp.detail[t] : null;
+      if (!d) {
+        row.push("", "", "", "");
+      } else {
+        row.push(d.carryExpired ? 0 : d.prevYearBalance);
+        row.push(d.thisYearEntitlement);
+        row.push(d.thisYearUtilized);
+        row.push(d.currentBalance);
+      }
+    });
     report.push(row);
   }
   return report;
