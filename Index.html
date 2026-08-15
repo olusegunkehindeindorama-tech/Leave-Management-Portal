@@ -51,17 +51,17 @@
     <h1>Leave Management</h1>
     <p>Sign in with your assigned User ID and password.</p>
     <div id="loginError" class="error-msg"></div>
-    <div class="input-group"><label>User ID</label><input type="text" id="userId"></div>
-    <div class="input-group"><label>Password</label><input type="password" id="password"></div>
+    <div class="input-group"><label>User ID</label><input type="text" id="userId" autocomplete="username" onkeydown="handleLoginKey(event)"></div>
+    <div class="input-group"><label>Password</label><input type="password" id="password" autocomplete="current-password" onkeydown="handleLoginKey(event)"></div>
     <button class="btn full" onclick="attemptLogin()" id="loginBtn">Log In</button>
     <div class="support-text">Forgot password? <button type="button" class="btn linkish" onclick="showResetPanel()">Reset via security question</button><br>or contact <b>Mr. Olusegun Kehinde</b>.</div>
     <div id="resetPanel">
       <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">
-      <div class="input-group"><label>User ID for reset</label><input type="text" id="resetUserId"></div>
+      <div class="input-group"><label>User ID for reset</label><input type="text" id="resetUserId" onkeydown="if(event.key==='Enter'){event.preventDefault();loadSecurityQuestion();}"></div>
       <button class="btn secondary full" onclick="loadSecurityQuestion()" id="loadQBtn">Load security question</button>
       <div id="questionBox" style="display:none;margin-top:14px">
         <p style="font-size:13px;font-weight:700" id="securityQuestionText"></p>
-        <div class="input-group"><label>Your answer</label><input type="text" id="resetAnswer"></div>
+        <div class="input-group"><label>Your answer</label><input type="text" id="resetAnswer" onkeydown="if(event.key==='Enter'){event.preventDefault();submitPasswordReset();}"></div>
         <button class="btn full" onclick="submitPasswordReset()" id="resetBtn">Reset password</button>
       </div>
       <div id="resetMsg" class="error-msg"></div>
@@ -144,6 +144,15 @@
     </section>
     <section id="adminModule" class="module">
       <h1>Admin Hub</h1>
+      <p class="subtitle">DarwinBox sync and bulk leave recalculation.</p>
+      <div class="card">
+        <h3>Leave utilization</h3>
+        <p style="color:var(--muted);font-size:14px;margin-top:0">Re-runs Shift Roaster / Actual Days logic for every row in tblLeave and updates <b>Leave Utilized</b> (and No of Days). Use after fixing calculation rules so older wrong totals are corrected.</p>
+        <div class="actions">
+          <button class="btn warning" onclick="runRecalculateLeaveUtilized()" id="recalcBtn">Recalculate all Leave Utilized</button>
+        </div>
+        <p id="recalcStatus" style="font-size:13px;color:var(--muted);margin-top:12px"></p>
+      </div>
       <div class="card actions">
         <button class="btn success" onclick="runDarwinBoxImport()">Import DarwinBox</button>
         <button class="btn" onclick="downloadDarwinBoxExport()">Export for DB</button>
@@ -169,6 +178,15 @@ let currentUser=null,loadedEmployee=null,selectedBalanceMap={},employeeSearchTim
 function showMessage(m,e){alert(m||(e?'Failed':'OK'))}
 function escapeHtml(v){return String(v==null?'':v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 function toInputDate(v){const d=new Date(v);return isNaN(d)? '':d.toISOString().slice(0,10)}
+
+/** Enter on User ID or Password submits login */
+function handleLoginKey(event){
+  if(event.key==='Enter'){
+    event.preventDefault();
+    attemptLogin();
+  }
+}
+
 function showResetPanel(){document.getElementById('resetPanel').style.display='block';document.getElementById('resetUserId').value=document.getElementById('userId').value.trim()}
 function loadSecurityQuestion(){const uid=document.getElementById('resetUserId').value.trim();const msg=document.getElementById('resetMsg');if(!uid){msg.innerText='Enter User ID';msg.style.display='block';return}google.script.run.withSuccessHandler(r=>{if(!r.success){msg.innerText=r.message;msg.style.display='block';return}msg.style.display='none';document.getElementById('securityQuestionText').innerText=r.question;document.getElementById('questionBox').style.display='block'}).getSecurityQuestion(uid)}
 function submitPasswordReset(){const uid=document.getElementById('resetUserId').value.trim(),ans=document.getElementById('resetAnswer').value,msg=document.getElementById('resetMsg');google.script.run.withSuccessHandler(r=>{msg.style.display='block';msg.style.color=r.success?'#16a34a':'#dc2626';msg.innerText=r.message}).resetPasswordWithAnswer(uid,ans)}
@@ -197,6 +215,30 @@ function saveShiftEdit(){const d=document.getElementById('shiftEditDate').innerT
 function downloadDarwinBoxExport(){google.script.run.withSuccessHandler(r=>{if(!r.success)return showMessage(r.message,true);downloadCsv(r.fileName,r.csv)}).buildDarwinBoxExportCsv()}
 function runDarwinBoxImport(){google.script.run.withSuccessHandler(r=>showMessage(r&&r.message||'Done')).importDarwinBoxLeaves()}
 function runShiftImport(){google.script.run.withSuccessHandler(r=>showMessage(r&&r.message||'Done')).processShiftFiles()}
+
+/** Admin: recalculate all Leave Utilized with corrected ShiftRoaster / ActualDays logic */
+function runRecalculateLeaveUtilized(){
+  if(!confirm('Recalculate Leave Utilized for ALL rows in tblLeave using current shift roster and policy methods? This may take a minute.')) return;
+  const btn=document.getElementById('recalcBtn');
+  const st=document.getElementById('recalcStatus');
+  btn.disabled=true;btn.innerText='Recalculating...';
+  st.innerText='Running… please wait.';
+  st.style.color='#64748b';
+  google.script.run
+    .withSuccessHandler(function(r){
+      btn.disabled=false;btn.innerText='Recalculate all Leave Utilized';
+      st.innerText=r&&r.message?r.message:'Done';
+      st.style.color=r&&r.success?'#16a34a':'#dc2626';
+      showMessage(r&&r.message?r.message:'Done',!(r&&r.success));
+    })
+    .withFailureHandler(function(e){
+      btn.disabled=false;btn.innerText='Recalculate all Leave Utilized';
+      st.innerText=e.message||'Error';
+      st.style.color='#dc2626';
+      showMessage(e.message||'Error',true);
+    })
+    .calculateLeaveUtilized();
+}
 </script>
 </body>
 </html>
