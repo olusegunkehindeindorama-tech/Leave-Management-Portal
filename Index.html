@@ -1,565 +1,383 @@
-
 <!DOCTYPE html>
 <html>
   <head>
     <base target="_top">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
       :root {
-        --primary: #4F46E5; 
-        --secondary: #06B6D4; 
-        --sidebar: #1E293B;
-        --sidebar-hover: #334155;
-        --light: #F1F5F9;
-        --dark: #0F172A;
-        --danger: #EF4444;
-      }
-      
-      body {
-        font-family: 'Inter', sans-serif;
-        margin: 0; padding: 0;
-        background: var(--light);
-        height: 100vh;
-        color: var(--dark);
-        overflow: hidden; /* Prevent body scroll */
+        --primary: #4f46e5;
+        --primary-dark: #3730a3;
+        --secondary: #06b6d4;
+        --accent: #f97316;
+        --success: #16a34a;
+        --danger: #dc2626;
+        --warning: #ca8a04;
+        --sidebar: #111827;
+        --sidebar-soft: #1f2937;
+        --surface: #ffffff;
+        --muted: #64748b;
+        --line: #e2e8f0;
+        --light: #f1f5f9;
+        --dark: #0f172a;
       }
 
-      /* View Controller */
-      .view { display: none; width: 100%; height: 100%; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: 'Inter', sans-serif;
+        color: var(--dark);
+        background: var(--light);
+      }
+      button, input, select, textarea { font-family: inherit; }
+      .view { display: none; min-height: 100vh; width: 100%; }
       .view.active { display: flex; }
 
-      /* --- LOGIN STYLES --- */
       #loginView {
-        background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
-        justify-content: center; align-items: center;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at top left, rgba(249, 115, 22, 0.32), transparent 28%),
+          radial-gradient(circle at bottom right, rgba(6, 182, 212, 0.35), transparent 32%),
+          linear-gradient(135deg, #312e81, #0891b2);
       }
       .login-card {
-        background: white; padding: 40px; border-radius: 16px;
-        box-shadow: 0 10px 25px rgba(0,0,0,0.2); width: 350px; text-align: center;
+        width: min(420px, 100%);
+        padding: 40px;
+        border-radius: 28px;
+        background: rgba(255, 255, 255, 0.94);
+        box-shadow: 0 24px 80px rgba(15, 23, 42, 0.35);
       }
-      .login-card h2 { margin-top: 0; color: var(--primary); }
-      .input-group { margin-bottom: 20px; text-align: left; }
-      .input-group label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 5px; }
-      .input-group input { 
-        width: 100%; padding: 10px; border: 1px solid #CBD5E1; 
-        border-radius: 8px; box-sizing: border-box; font-family: 'Inter';
+      .brand-mark {
+        width: 62px;
+        height: 62px;
+        border-radius: 18px;
+        display: grid;
+        place-items: center;
+        margin: 0 auto 16px;
+        color: white;
+        font-size: 30px;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+      }
+      .login-card h1 { margin: 0; text-align: center; font-size: 28px; }
+      .login-card p { text-align: center; color: var(--muted); }
+      .input-group { margin-bottom: 18px; position: relative; }
+      label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 700; color: #334155; }
+      input, select, textarea {
+        width: 100%;
+        padding: 12px 13px;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        background: white;
+        color: var(--dark);
+        outline: none;
+      }
+      input:focus, select:focus, textarea:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.12);
       }
       .btn {
-        background: var(--primary); color: white; border: none; padding: 12px;
-        width: 100%; border-radius: 8px; font-weight: bold; cursor: pointer;
-        transition: background 0.3s;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 16px;
+        font-weight: 800;
+        cursor: pointer;
+        color: white;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        transition: transform 0.15s ease, opacity 0.15s ease;
       }
-      .btn:hover { background: #4338CA; }
-      .error-msg { color: var(--danger); font-size: 13px; margin-bottom: 15px; display: none; }
-      .support-text { font-size: 12px; color: #64748B; margin-top: 20px; }
+      .btn:hover { transform: translateY(-1px); }
+      .btn:disabled { opacity: 0.62; cursor: not-allowed; transform: none; }
+      .btn.secondary { background: #475569; }
+      .btn.success { background: var(--success); }
+      .btn.warning { background: var(--warning); }
+      .btn.danger { background: var(--danger); }
+      .btn.ghost { background: white; color: var(--dark); border: 1px solid var(--line); }
+      .btn.full { width: 100%; }
+      .error-msg { display: none; margin: 14px 0; color: var(--danger); font-weight: 700; font-size: 13px; text-align: center; }
+      .support-text { margin-top: 18px; font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
 
-      /* --- DASHBOARD STYLES (SIDEBAR LAYOUT) --- */
       #appView { flex-direction: row; }
-      
       .sidebar {
-        width: 260px; background: var(--sidebar); color: white;
-        display: flex; flex-direction: column; box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        width: 280px;
+        color: white;
+        background: linear-gradient(180deg, var(--sidebar), var(--sidebar-soft));
+        display: flex;
+        flex-direction: column;
       }
-      .sidebar-header {
-        padding: 25px 20px; border-bottom: 1px solid #334155;
-      }
-      .sidebar-header h2 { margin: 0; font-size: 18px; color: var(--light); }
-      
-      .menu { flex-grow: 1; padding: 20px 0; }
+      .sidebar-header { padding: 26px 22px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+      .sidebar-header h2 { margin: 0; font-size: 20px; }
+      .sidebar-header small { color: #93c5fd; }
+      .menu { flex: 1; padding: 18px 0; }
       .menu-item {
-        padding: 15px 25px; cursor: pointer; display: flex; align-items: center;
-        color: #94A3B8; font-weight: 600; transition: all 0.2s;
+        padding: 15px 24px;
+        cursor: pointer;
+        color: #cbd5e1;
+        font-weight: 700;
+        border-left: 4px solid transparent;
       }
-      .menu-item:hover, .menu-item.active {
-        background: var(--sidebar-hover); color: white; border-left: 4px solid var(--primary);
-      }
-      .menu-item[data-target="adminModule"] { display: none; /* Hidden by default */ }
-      
-      .user-profile {
-        padding: 20px; border-top: 1px solid #334155; font-size: 14px;
-      }
-      .user-name { font-weight: bold; color: white; margin-bottom: 5px; }
-      .admin-badge { background: var(--primary); color: white; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-left: 5px; }
-      .logout-btn { color: #FCA5A5; cursor: pointer; font-weight: 600; margin-top: 10px; display: inline-block; }
-      .logout-btn:hover { color: var(--danger); }
+      .menu-item:hover, .menu-item.active { color: white; background: rgba(255,255,255,0.08); border-left-color: var(--secondary); }
+      #adminMenuBtn { display: none; }
+      .user-profile { padding: 20px 24px; border-top: 1px solid rgba(255,255,255,0.08); }
+      .admin-badge { display: none; margin-left: 8px; padding: 3px 7px; border-radius: 999px; background: var(--accent); font-size: 11px; }
+      .logout-btn { display: inline-block; margin-top: 10px; color: #fca5a5; cursor: pointer; font-weight: 800; }
 
-      /* Main Content Area */
-      .main-content {
-        flex-grow: 1; padding: 40px; background: var(--light);
-        overflow-y: auto;
-      }
+      .main-content { flex: 1; padding: 34px; overflow-y: auto; max-height: 100vh; }
       .module { display: none; }
       .module.active { display: block; }
-      
-      /* Basic Module Styling */
-      .card {
-        background: white; border-radius: 12px; padding: 25px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 25px;
+      .module-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 22px; }
+      h1 { margin: 0; font-size: 28px; }
+      .subtitle { margin: 6px 0 0; color: var(--muted); }
+      .card { background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 24px; box-shadow: 0 12px 35px rgba(15,23,42,0.07); margin-bottom: 22px; }
+      .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+      .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+      .profile-card { display: none; background: #f8fafc; border: 1px solid var(--line); border-radius: 18px; padding: 18px; }
+      .profile-pill { display: inline-flex; padding: 8px 10px; border-radius: 999px; background: white; border: 1px solid var(--line); margin: 4px 8px 4px 0; color: #334155; font-size: 13px; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { padding: 11px 10px; text-align: left; border-bottom: 1px solid var(--line); }
+      th { background: #eef2ff; color: #3730a3; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+      .status-pill { display: inline-flex; padding: 4px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; background: #fef3c7; color: #92400e; }
+      .autocomplete-panel {
+        display: none;
+        position: absolute;
+        z-index: 20;
+        left: 0;
+        right: 0;
+        top: calc(100% + 4px);
+        max-height: 240px;
+        overflow-y: auto;
+        border: 1px solid var(--line);
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 18px 45px rgba(15,23,42,0.18);
       }
-      h1 { margin-top: 0; color: var(--dark); font-size: 24px; }
+      .autocomplete-item { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #f1f5f9; }
+      .autocomplete-item:hover { background: #eef2ff; }
+      .modal-backdrop { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(15,23,42,0.58); align-items: center; justify-content: center; padding: 20px; }
+      .modal-card { width: min(520px, 100%); background: white; border-radius: 22px; padding: 24px; box-shadow: 0 20px 60px rgba(15,23,42,0.35); }
+      .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+      @media (max-width: 900px) {
+        #appView { flex-direction: column; }
+        .sidebar { width: 100%; }
+        .grid-2, .grid-3 { grid-template-columns: 1fr; }
+        .main-content { max-height: none; padding: 20px; }
+      }
     </style>
   </head>
-<div id="editModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
-  <div class="card" style="width: 400px; position: relative;">
-    <h3 style="margin-top:0; color:var(--primary);">Edit Leave Record</h3>
-    <p><strong>Code:</strong> <span id="editEntryCode"></span></p>
-    
-    <div style="display:flex; gap:15px; margin-top:15px;">
-      <div class="input-group"><label>Start Date</label><input type="date" id="editStartDate"></div>
-      <div class="input-group"><label>End Date</label><input type="date" id="editEndDate"></div>
-    </div>
-    
-    <div class="input-group" style="margin-top:10px;">
-      <label>Leave Reason</label>
-      <textarea id="editLeaveReason" rows="3" style="width:100%;"></textarea>
-    </div>
-    
-    <div style="display:flex; gap:10px; margin-top:20px;">
-      <button class="btn" onclick="submitEdit()" id="saveEditBtn">Save Changes</button>
-      <button class="btn" style="background:#64748B;" onclick="closeEditModal()">Cancel</button>
-    </div>
-  </div>
-</div>
-
   <body>
-
-    <!-- 1. LOGIN VIEW -->
     <div id="loginView" class="view active">
       <div class="login-card">
-        <h2>Leave Management</h2>
-        <p style="color: #64748B; font-size: 14px; margin-bottom: 25px;">Sign in to continue</p>
+        <div class="brand-mark">🌿</div>
+        <h1>Leave Management</h1>
+        <p>Sign in with your assigned User ID and password.</p>
         <div id="loginError" class="error-msg"></div>
-        <div class="input-group">
-          <label>User ID</label>
-          <input type="text" id="userId" placeholder="Enter your ID">
-        </div>
-        <div class="input-group">
-          <label>Password</label>
-          <input type="password" id="password" placeholder="Enter your password">
-        </div>
-        <button class="btn" onclick="attemptLogin()" id="loginBtn">Log In</button>
-        <div class="support-text">
-          Forgot your password?<br>
-          Please contact <b>Mr. Olusegun Kehinde</b> for password reset.
-        </div>
+        <div class="input-group"><label for="userId">User ID</label><input type="text" id="userId" autocomplete="username" placeholder="Enter your User ID"></div>
+        <div class="input-group"><label for="password">Password</label><input type="password" id="password" autocomplete="current-password" placeholder="Enter your password"></div>
+        <button class="btn full" onclick="attemptLogin()" id="loginBtn">Log In</button>
+        <div class="support-text">Forgot your password?<br>Contact <b>Mr. Olusegun Kehinde</b> for password reset.</div>
       </div>
     </div>
 
-    <!-- 2. MAIN APP DASHBOARD -->
     <div id="appView" class="view">
-      
-      <!-- Sidebar -->
-      <div class="sidebar">
-        <div class="sidebar-header">
-          <h2>Leave Management</h2>
-        </div>
-        <div class="menu">
+      <aside class="sidebar">
+        <div class="sidebar-header"><h2>Leave Management</h2><small>Employee leave operations</small></div>
+        <nav class="menu">
           <div class="menu-item active" data-target="leaveEntryModule" onclick="switchModule(this)">📝 Leave Entry</div>
           <div class="menu-item" data-target="reportsModule" onclick="switchModule(this)">📊 Reports & Balances</div>
           <div class="menu-item" data-target="shiftModule" onclick="switchModule(this)">📅 Shift Roster</div>
-          <!-- Admin Only Menu Item -->
-          <div class="menu-item" id="adminMenuBtn" data-target="adminModule" onclick="switchModule(this)">⚙️ Admin Hub (DB Sync)</div>
-        </div>
+          <div class="menu-item" id="adminMenuBtn" data-target="adminModule" onclick="switchModule(this)">⚙️ Admin Hub</div>
+        </nav>
         <div class="user-profile">
-          <div class="user-name"><span id="displayUserName">Loading...</span><span id="adminBadge" class="admin-badge" style="display:none;">ADMIN</span></div>
-          <div class="logout-btn" onclick="logout()">Logout</div>
+          <div><b id="displayUserName">Not signed in</b><span id="adminBadge" class="admin-badge">ADMIN</span></div>
+          <span class="logout-btn" onclick="logout()">Logout</span>
         </div>
-      </div>
+      </aside>
 
-      <!-- Main Content Area -->
-      <div class="main-content">
-        
-        <!-- Leave Entry Module -->
-        <div id="leaveEntryModule" class="module active">
-          <h1>Leave Entry</h1>
+      <main class="main-content">
+        <section id="leaveEntryModule" class="module active">
+          <div class="module-header"><div><h1>Leave Entry</h1><p class="subtitle">Search an employee, review balances, submit or modify leave records.</p></div></div>
           <div class="card">
-            <p>The dynamic form for entering leave records will go here.</p>
-            <!-- ADD TO: #leaveEntryModule in Index.html -->
-<div class="card">
-  <h3>New Leave Request</h3>
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-    <!-- Emp ID Input with Datalist -->
-    <div class="input-group">
-      <label>Employee ID</label>
-      <input type="text" id="formEmpId" list="empList" onchange="fetchEmployeeDetails()" placeholder="Start typing ID...">
-      <datalist id="empList"></datalist>
+            <div class="grid-2">
+              <div class="input-group">
+                <label for="formEmpId">Employee ID</label>
+                <input type="text" id="formEmpId" oninput="handleEmployeeSearch()" onkeydown="handleEmployeeKey(event)" placeholder="Type any part of an ID, e.g. t75">
+                <div id="employeeSuggestions" class="autocomplete-panel"></div>
+              </div>
+              <div class="input-group"><label>&nbsp;</label><button class="btn full" onclick="fetchEmployeeDetails()">Load Employee</button></div>
+            </div>
+
+            <div id="employeeDisplay" class="profile-card">
+              <div id="profileSummary"></div>
+              <h3>Visible Leave Balances</h3>
+              <div id="balanceTable"></div>
+              <h3>New Leave Request</h3>
+              <div class="grid-3">
+                <div class="input-group"><label for="leaveTypeSelect">Leave Type</label><select id="leaveTypeSelect"></select></div>
+                <div class="input-group"><label for="startDate">Start Date</label><input type="date" id="startDate"></div>
+                <div class="input-group"><label for="endDate">End Date</label><input type="date" id="endDate"></div>
+              </div>
+              <div class="input-group"><label for="leaveReason">Leave Reason</label><textarea id="leaveReason" rows="3" placeholder="Enter reason for leave"></textarea></div>
+              <button class="btn" onclick="submitLeave()" id="submitLeaveBtn">Submit Request</button>
+
+              <h3 style="margin-top:32px;">Recent Leave History</h3>
+              <div id="historyTableWrap"><table><tbody id="historyTableBody"><tr><td>No employee loaded.</td></tr></tbody></table></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="reportsModule" class="module">
+          <div class="module-header"><div><h1>Reports & Balances</h1><p class="subtitle">Generate balance reports from the current policy and leave data.</p></div></div>
+          <div class="card actions"><button class="btn" onclick="downloadBalanceReport()">Download Balance CSV</button></div>
+        </section>
+
+        <section id="shiftModule" class="module">
+          <div class="module-header"><div><h1>Shift Roster</h1><p class="subtitle">Refresh employee shift data from the configured Drive folder.</p></div></div>
+          <div class="card actions"><button class="btn warning" onclick="runShiftImport()">Update Shift Records</button></div>
+        </section>
+
+        <section id="adminModule" class="module">
+          <div class="module-header"><div><h1>Admin Hub</h1><p class="subtitle">Import DarwinBox records and export local records for upload.</p></div></div>
+          <div class="card actions">
+            <button class="btn success" onclick="runDarwinBoxImport()">Import DarwinBox CSV</button>
+            <button class="btn" onclick="downloadDarwinBoxExport()">Export Local Records for DB</button>
+          </div>
+        </section>
+      </main>
     </div>
-  </div>
 
-  <!-- Dynamic Details Display (Hidden by default) -->
-  <div id="employeeDisplay" style="display:none; margin-top:20px; background:#f8fafc; padding:15px; border-radius:8px;">
-    <p><strong>Name:</strong> <span id="dispName"></span> | <strong>Dept:</strong> <span id="dispDept"></span></p>
-    <p><strong>BU:</strong> <span id="dispBU"></span> | <strong>Category:</strong> <span id="dispCat"></span></p>
-    <hr>
-    <div id="balanceTable"></div>
-    
-    <div style="margin-top:20px;">
-      <label>Leave Type</label>
-      <select id="leaveTypeSelect"></select>
-      
-      <div style="display:flex; gap:15px; margin-top:10px;">
-        <div class="input-group"><label>Start Date</label><input type="date" id="startDate"></div>
-        <div class="input-group"><label>End Date</label><input type="date" id="endDate"></div>
-      </div>
-      
-      <label>Leave Reason</label>
-      <textarea id="leaveReason" rows="3" style="width:100%;"></textarea>
-      
-      <button class="btn" style="margin-top:20px;" onclick="submitLeave()">Submit Request</button>
-    </div>
-
-    <div id="leaveHistorySection" style="margin-top: 40px;">
-  <h4 style="border-bottom: 1px solid #CBD5E1; padding-bottom: 10px;">Recent Leave History</h4>
-  <table style="width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px;">
-    <thead>
-      <tr style="background: #E2E8F0; text-align: left;">
-        <th style="padding: 10px;">Code</th>
-        <th style="padding: 10px;">Type</th>
-        <th style="padding: 10px;">Start</th>
-        <th style="padding: 10px;">End</th>
-        <th style="padding: 10px;">Status</th>
-        <th style="padding: 10px;">Action</th>
-      </tr>
-    </thead>
-    <tbody id="historyTableBody">
-      <!-- Rows will be injected here -->
-    </tbody>
-  </table>
-</div>
-  </div>
-</div>
-
-<script>
-  // Initialize Datalist on Load
-  window.onload = function() {
-    google.script.run.withSuccessHandler(function(ids) {
-      const list = document.getElementById('empList');
-      ids.forEach(id => {
-        let opt = document.createElement('option');
-        opt.value = id;
-        list.appendChild(opt);
-      });
-    }).getEmployeeIds();
-  };
-
-  function fetchEmployeeDetails() {
-    const empId = document.getElementById('formEmpId').value;
-    google.script.run.withSuccessHandler(function(data) {
-      if (data.error) { alert(data.error); return; }
-      
-      // Populate Profile
-      document.getElementById('dispName').innerText = data.profile.name;
-      document.getElementById('dispDept').innerText = data.profile.dept;
-      document.getElementById('dispBU').innerText = data.profile.bu;
-      document.getElementById('dispCat').innerText = data.profile.category;
-      
-      // Populate Dropdowns & Tables (You will build the table logic here)
-      document.getElementById('employeeDisplay').style.display = 'block';
-      
-      // Update Leave Type Dropdown based on data.balances
-      const select = document.getElementById('leaveTypeSelect');
-      select.innerHTML = '<option value="">Select Leave Type</option>';
-      data.balances.forEach(b => {
-        if(b.balance > 0) { // Only show entitled/available
-           select.innerHTML += `<option value="${b.type}">${b.type} (Bal: ${b.balance})</option>`;
-        }
-      });
-      // FETCH HISTORY TRIGGER
-    fetchHistoryTable(empId);
-    }).getEmployeeForForm(empId);
-  }
-
-
-// NEW FUNCTION: Fetches and builds the history table
-function fetchHistoryTable(empId) {
-  const tbody = document.getElementById('historyTableBody');
-  tbody.innerHTML = '<tr><td colspan="6" style="padding:10px; text-align:center;">Loading history...</td></tr>';
-  
-  google.script.run.withSuccessHandler(function(history) {
-    tbody.innerHTML = '';
-    if (history.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="padding:10px; text-align:center;">No previous records found.</td></tr>';
-      return;
-    }
-    
-    history.forEach(r => {
-      // Format dates safely for display and input injection
-      let sDate = new Date(r.startDate).toISOString().split('T')[0];
-      let eDate = new Date(r.endDate).toISOString().split('T')[0];
-      
-      let row = `
-        <tr style="border-bottom: 1px solid #F1F5F9;">
-          <td style="padding: 10px; font-weight:600;">${r.entryCode}</td>
-          <td style="padding: 10px;">${r.type}</td>
-          <td style="padding: 10px;">${sDate}</td>
-          <td style="padding: 10px;">${eDate}</td>
-          <td style="padding: 10px;">
-            <span style="padding:2px 8px; border-radius:12px; font-size:11px; background:${r.status === 'Not Uploaded' ? '#FEF08A' : '#BBF7D0'}; color:#333;">
-              ${r.status}
-            </span>
-          </td>
-          <td style="padding: 10px;">
-            <button onclick="openEditModal('${r.entryCode}', '${sDate}', '${eDate}', '${r.reason.replace(/'/g, "\\'")}')" 
-                    style="background:none; border:1px solid #CBD5E1; cursor:pointer; padding:4px 8px; border-radius:4px;">
-              Edit
-            </button>
-          </td>
-        </tr>
-      `;
-      tbody.innerHTML += row;
-    });
-  }).getEmployeeLeaveHistory(empId);
-}
-
-// MODAL CONTROLS
-function openEditModal(code, start, end, reason) {
-  document.getElementById('editEntryCode').innerText = code;
-  document.getElementById('editStartDate').value = start;
-  document.getElementById('editEndDate').value = end;
-  document.getElementById('editLeaveReason').value = reason;
-  
-  document.getElementById('editModal').style.display = 'flex';
-}
-
-function closeEditModal() {
-  document.getElementById('editModal').style.display = 'none';
-}
-
-// SUBMIT EDIT
-function submitEdit() {
-  const code = document.getElementById('editEntryCode').innerText;
-  const start = document.getElementById('editStartDate').value;
-  const end = document.getElementById('editEndDate').value;
-  const reason = document.getElementById('editLeaveReason').value;
-  const empId = document.getElementById('formEmpId').value;
-  const btn = document.getElementById('saveEditBtn');
-  
-  if (new Date(end) < new Date(start)) {
-    alert("End Date cannot be earlier than Start Date.");
-    return;
-  }
-  
-  btn.innerText = "Saving...";
-  btn.disabled = true;
-  
-  const updateData = {
-    entryCode: code,
-    empId: empId,
-    startDate: start,
-    endDate: end,
-    leaveReason: reason
-  };
-  
-  google.script.run.withSuccessHandler(function(response) {
-    alert(response.message);
-    btn.innerText = "Save Changes";
-    btn.disabled = false;
-    
-    if (response.success) {
-      closeEditModal();
-      fetchHistoryTable(empId); // Refresh table immediately
-    }
-  }).updateLeaveRecord(updateData, currentUser);
-}
-  /**
- * Collects form data, validates it, and submits to the backend
- */
-function submitLeave() {
-  const submitBtn = document.querySelector('#employeeDisplay .btn');
-  const empId = document.getElementById('formEmpId').value;
-  const leaveTypeSelect = document.getElementById('leaveTypeSelect');
-  const leaveType = leaveTypeSelect.value;
-  const startDate = document.getElementById('startDate').value;
-  const endDate = document.getElementById('endDate').value;
-  const leaveReason = document.getElementById('leaveReason').value;
-
-  // 1. Basic Field Validation
-  if (!empId || !leaveType || !startDate || !endDate || !leaveReason) {
-    alert("Please fill in all required fields before submitting.");
-    return;
-  }
-  
-  if (new Date(endDate) < new Date(startDate)) {
-    alert("End Date cannot be earlier than Start Date.");
-    return;
-  }
-
-  // Extract the available balance from the dropdown text for basic frontend validation
-  const selectedOptionText = leaveTypeSelect.options[leaveTypeSelect.selectedIndex].text;
-  let availableBal = 0;
-  const balMatch = selectedOptionText.match(/Bal: ([\d.]+)/);
-  if (balMatch) {
-    availableBal = parseFloat(balMatch[1]);
-  }
-
-  // 2. Build Payload
-  const formData = {
-    empId: empId.toUpperCase(),
-    empName: document.getElementById('dispName').innerText,
-    dept: document.getElementById('dispDept').innerText,
-    category: document.getElementById('dispCat').innerText,
-    bu: document.getElementById('dispBU').innerText,
-    leaveType: leaveType,
-    startDate: startDate,
-    endDate: endDate,
-    leaveReason: leaveReason,
-    availableBalance: availableBal
-  };
-
-  // 3. UI State Management (Prevent double-clicking)
-  submitBtn.innerText = "Processing...";
-  submitBtn.disabled = true;
-
-  // 4. Send to Backend
-  google.script.run
-    .withSuccessHandler(function(response) {
-      if (response.success) {
-        alert(response.message);
-        resetForm();
-      } else {
-        alert(response.message);
-        submitBtn.innerText = "Submit Request";
-        submitBtn.disabled = false;
-      }
-    })
-    .withFailureHandler(function(error) {
-      alert("System Error: " + error.message);
-      submitBtn.innerText = "Submit Request";
-      submitBtn.disabled = false;
-    })
-    // currentUser is the global session variable stored upon successful login
-    .submitLeaveRequest(formData, currentUser); 
-}
-
-/**
- * Resets the Leave Entry form after a successful submission
- */
-function resetForm() {
-  document.getElementById('formEmpId').value = "";
-  document.getElementById('employeeDisplay').style.display = 'none';
-  document.getElementById('startDate').value = "";
-  document.getElementById('endDate').value = "";
-  document.getElementById('leaveReason').value = "";
-  
-  const submitBtn = document.querySelector('#employeeDisplay .btn');
-  submitBtn.innerText = "Submit Request";
-  submitBtn.disabled = false;
-}
-</script>
-          </div>
+    <div id="editModal" class="modal-backdrop">
+      <div class="modal-card">
+        <h2>Edit Leave Record</h2>
+        <p><strong>Code:</strong> <span id="editEntryCode"></span></p>
+        <div class="grid-2">
+          <div class="input-group"><label for="editStartDate">Start Date</label><input type="date" id="editStartDate"></div>
+          <div class="input-group"><label for="editEndDate">End Date</label><input type="date" id="editEndDate"></div>
         </div>
-
-        <!-- Reports Module -->
-        <div id="reportsModule" class="module">
-          <h1>Reports & Balances</h1>
-          <div class="card">
-            <p>Data tables and CSV download buttons will go here.</p>
-          </div>
-        </div>
-
-        <!-- Shift Module -->
-        <div id="shiftModule" class="module">
-          <h1>Shift Roster</h1>
-          <div class="card">
-            <p>Shift calendar and editing tools will go here.</p>
-          </div>
-        </div>
-
-        <!-- Admin Module -->
-        <div id="adminModule" class="module">
-          <h1>Admin Hub</h1>
-          <div class="card">
-            <p>DarwinBox Import/Export and core processing scripts.</p>
-          </div>
-        </div>
-
+        <div class="input-group"><label for="editLeaveReason">Leave Reason</label><textarea id="editLeaveReason" rows="3"></textarea></div>
+        <div class="actions"><button class="btn" onclick="submitEdit()" id="saveEditBtn">Save Changes</button><button class="btn secondary" onclick="closeEditModal()">Cancel</button></div>
       </div>
     </div>
 
-    <!-- JAVASCRIPT LOGIC -->
     <script>
       let currentUser = null;
+      let loadedEmployee = null;
+      let selectedBalanceMap = {};
+      let employeeSearchTimer = null;
+
+      function showMessage(message, isError) { alert(message || (isError ? 'Action failed.' : 'Action completed.')); }
+      function escapeHtml(value) { return String(value == null ? '' : value).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
+      function toInputDate(value) { const d = new Date(value); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0,10); }
 
       function attemptLogin() {
-        const userId = document.getElementById('userId').value;
+        const userId = document.getElementById('userId').value.trim();
         const pass = document.getElementById('password').value;
         const btn = document.getElementById('loginBtn');
         const errorDiv = document.getElementById('loginError');
-
-        if (!userId || !pass) {
-          errorDiv.innerText = "Please enter both User ID and Password.";
-          errorDiv.style.display = "block";
-          return;
-        }
-
-        btn.innerText = "Authenticating...";
-        btn.disabled = true;
-        errorDiv.style.display = "none";
-
-        google.script.run
-          .withSuccessHandler(function(response) {
-            btn.innerText = "Log In";
-            btn.disabled = false;
-            
-            if (response.success) {
-              currentUser = response.user;
-              loadDashboard();
-            } else {
-              errorDiv.innerText = response.message;
-              errorDiv.style.display = "block";
-            }
-          })
-          .withFailureHandler(function(error) {
-            btn.innerText = "Log In";
-            btn.disabled = false;
-            errorDiv.innerText = "Connection error. Please try again.";
-            errorDiv.style.display = "block";
-          })
-          .loginUser(userId, pass);
+        if (!userId || !pass) { errorDiv.innerText = 'Please enter both User ID and Password.'; errorDiv.style.display = 'block'; return; }
+        btn.innerText = 'Authenticating...'; btn.disabled = true; errorDiv.style.display = 'none';
+        google.script.run.withSuccessHandler(function(response) {
+          btn.innerText = 'Log In'; btn.disabled = false;
+          if (response.success) { currentUser = response.user; loadDashboard(); } else { errorDiv.innerText = response.message; errorDiv.style.display = 'block'; }
+        }).withFailureHandler(function(error) {
+          btn.innerText = 'Log In'; btn.disabled = false; errorDiv.innerText = error.message || 'Connection error.'; errorDiv.style.display = 'block';
+        }).loginUser(userId, pass);
       }
 
       function loadDashboard() {
         document.getElementById('loginView').classList.remove('active');
         document.getElementById('appView').classList.add('active');
-        
         document.getElementById('displayUserName').innerText = currentUser.name;
-        
-        // Show admin features if applicable
-        if (currentUser.role === 'admin') {
-          document.getElementById('adminBadge').style.display = 'inline-block';
-          document.getElementById('adminMenuBtn').style.display = 'flex';
-        }
+        const isAdmin = currentUser.role === 'admin';
+        document.getElementById('adminBadge').style.display = isAdmin ? 'inline-flex' : 'none';
+        document.getElementById('adminMenuBtn').style.display = isAdmin ? 'block' : 'none';
       }
+      function logout() { currentUser = null; loadedEmployee = null; document.getElementById('userId').value = ''; document.getElementById('password').value = ''; document.getElementById('appView').classList.remove('active'); document.getElementById('loginView').classList.add('active'); }
+      function switchModule(clickedEl) { document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active')); clickedEl.classList.add('active'); document.querySelectorAll('.module').forEach(el => el.classList.remove('active')); document.getElementById(clickedEl.dataset.target).classList.add('active'); }
 
-      function logout() {
-        currentUser = null;
-        document.getElementById('userId').value = "";
-        document.getElementById('password').value = "";
-        
-        // Reset Admin UI
-        document.getElementById('adminBadge').style.display = 'none';
-        document.getElementById('adminMenuBtn').style.display = 'none';
-        
-        // Reset views to default
-        switchModule(document.querySelector('.menu-item[data-target="leaveEntryModule"]'));
-        
-        document.getElementById('appView').classList.remove('active');
-        document.getElementById('loginView').classList.add('active');
+      function handleEmployeeSearch() {
+        clearTimeout(employeeSearchTimer);
+        const query = document.getElementById('formEmpId').value.trim();
+        const panel = document.getElementById('employeeSuggestions');
+        if (query.length < 2) { panel.style.display = 'none'; return; }
+        employeeSearchTimer = setTimeout(function() {
+          google.script.run.withSuccessHandler(function(results) {
+            if (!results || !results.length) { panel.style.display = 'none'; return; }
+            panel.innerHTML = results.map(item => `<div class="autocomplete-item" onclick="selectEmployee('${escapeHtml(item.id)}')"><b>${escapeHtml(item.id)}</b> — ${escapeHtml(item.name)} <small>${escapeHtml(item.department || '')}</small></div>`).join('');
+            panel.style.display = 'block';
+          }).searchEmployees(query, 12);
+        }, 180);
       }
+      function handleEmployeeKey(event) { if (event.key === 'Enter') { event.preventDefault(); fetchEmployeeDetails(); } }
+      function selectEmployee(empId) { document.getElementById('formEmpId').value = empId; document.getElementById('employeeSuggestions').style.display = 'none'; fetchEmployeeDetails(); }
 
-      // Sidebar Navigation Routing
-      function switchModule(clickedEl) {
-        // Remove active class from all menu items
-        document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
-        // Add active class to clicked item
-        clickedEl.classList.add('active');
-        
-        // Hide all modules
-        document.querySelectorAll('.module').forEach(el => el.classList.remove('active'));
-        // Show target module
-        const targetId = clickedEl.getAttribute('data-target');
-        document.getElementById(targetId).classList.add('active');
+      function fetchEmployeeDetails() {
+        const empId = document.getElementById('formEmpId').value.trim();
+        if (!empId) { showMessage('Please enter an employee ID.', true); return; }
+        google.script.run.withSuccessHandler(function(data) {
+          if (data.error) { showMessage(data.error, true); return; }
+          loadedEmployee = data.profile;
+          selectedBalanceMap = {};
+          document.getElementById('employeeDisplay').style.display = 'block';
+          document.getElementById('profileSummary').innerHTML = `<span class="profile-pill"><b>${escapeHtml(data.profile.id)}</b></span><span class="profile-pill">${escapeHtml(data.profile.name)}</span><span class="profile-pill">Dept: ${escapeHtml(data.profile.dept)}</span><span class="profile-pill">BU: ${escapeHtml(data.profile.bu)}</span><span class="profile-pill">Category: ${escapeHtml(data.profile.category)}</span>`;
+          renderBalances(data.balances || []);
+          fetchHistoryTable(data.profile.id);
+        }).withFailureHandler(function(error) { showMessage(error.message, true); }).getEmployeeForForm(empId);
       }
+      function renderBalances(balances) {
+        const select = document.getElementById('leaveTypeSelect');
+        select.innerHTML = '<option value="">Select Leave Type</option>';
+        let rows = '';
+        balances.forEach(b => {
+          selectedBalanceMap[b.type] = b;
+          const balText = b.balance === 'Unlimited' ? 'Unlimited' : Number(b.balance || 0).toFixed(2);
+          rows += `<tr><td>${escapeHtml(b.type)}</td><td>${escapeHtml(b.entitlement)}</td><td>${escapeHtml(b.utilized)}</td><td><b>${escapeHtml(balText)}</b></td></tr>`;
+          if (b.balance === 'Unlimited' || Number(b.balance) > 0) select.innerHTML += `<option value="${escapeHtml(b.type)}">${escapeHtml(b.type)} (Bal: ${escapeHtml(balText)})</option>`;
+        });
+        document.getElementById('balanceTable').innerHTML = `<table><thead><tr><th>Leave Type</th><th>Entitlement</th><th>Utilized</th><th>Balance</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No visible leave balances found.</td></tr>'}</tbody></table>`;
+      }
+      function submitLeave() {
+        const leaveType = document.getElementById('leaveTypeSelect').value;
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+        const leaveReason = document.getElementById('leaveReason').value.trim();
+        if (!loadedEmployee || !leaveType || !startDate || !endDate || !leaveReason) { showMessage('Please load an employee and complete all leave fields.', true); return; }
+        if (new Date(endDate) < new Date(startDate)) { showMessage('End Date cannot be earlier than Start Date.', true); return; }
+        const bal = selectedBalanceMap[leaveType] || {};
+        const btn = document.getElementById('submitLeaveBtn'); btn.innerText = 'Processing...'; btn.disabled = true;
+        google.script.run.withSuccessHandler(function(response) {
+          btn.innerText = 'Submit Request'; btn.disabled = false; showMessage(response.message, !response.success);
+          if (response.success) { document.getElementById('startDate').value = ''; document.getElementById('endDate').value = ''; document.getElementById('leaveReason').value = ''; fetchEmployeeDetails(); }
+        }).withFailureHandler(function(error) { btn.innerText = 'Submit Request'; btn.disabled = false; showMessage(error.message, true); }).submitLeaveRequest({
+          empId: loadedEmployee.id, empName: loadedEmployee.name, dept: loadedEmployee.dept, category: loadedEmployee.category, bu: loadedEmployee.bu,
+          leaveType, startDate, endDate, leaveReason, availableBalance: bal.balance === 'Unlimited' ? 999999 : Number(bal.balance || 0)
+        }, currentUser);
+      }
+      function fetchHistoryTable(empId) {
+        const tbody = document.getElementById('historyTableBody');
+        tbody.innerHTML = '<tr><td>Loading history...</td></tr>';
+        google.script.run.withSuccessHandler(function(history) {
+          if (!history || !history.length) { tbody.innerHTML = '<tr><td>No previous records found.</td></tr>'; return; }
+          tbody.innerHTML = `<tr><th>Code</th><th>Type</th><th>Start</th><th>End</th><th>Status</th><th>Action</th></tr>` + history.map(r => {
+            const sDate = toInputDate(r.startDate); const eDate = toInputDate(r.endDate); const reason = escapeHtml(r.reason).replace(/`/g, '&#96;');
+            return `<tr><td><b>${escapeHtml(r.entryCode)}</b></td><td>${escapeHtml(r.type)}</td><td>${sDate}</td><td>${eDate}</td><td><span class="status-pill">${escapeHtml(r.status || 'Unknown')}</span></td><td><button class="btn ghost" onclick="openEditModal(\`${escapeHtml(r.entryCode)}\`, '${sDate}', '${eDate}', \`${reason}\`)">Edit</button></td></tr>`;
+          }).join('');
+        }).getEmployeeLeaveHistory(empId);
+      }
+      function openEditModal(code, start, end, reason) { document.getElementById('editEntryCode').innerText = code; document.getElementById('editStartDate').value = start; document.getElementById('editEndDate').value = end; document.getElementById('editLeaveReason').value = reason; document.getElementById('editModal').style.display = 'flex'; }
+      function closeEditModal() { document.getElementById('editModal').style.display = 'none'; }
+      function submitEdit() {
+        const code = document.getElementById('editEntryCode').innerText; const start = document.getElementById('editStartDate').value; const end = document.getElementById('editEndDate').value; const reason = document.getElementById('editLeaveReason').value; const btn = document.getElementById('saveEditBtn');
+        if (new Date(end) < new Date(start)) { showMessage('End Date cannot be earlier than Start Date.', true); return; }
+        btn.innerText = 'Saving...'; btn.disabled = true;
+        google.script.run.withSuccessHandler(function(response) { btn.innerText = 'Save Changes'; btn.disabled = false; showMessage(response.message, !response.success); if (response.success) { closeEditModal(); fetchEmployeeDetails(); } }).withFailureHandler(function(error) { btn.innerText = 'Save Changes'; btn.disabled = false; showMessage(error.message, true); }).updateLeaveRecord({ entryCode: code, empId: loadedEmployee.id, startDate: start, endDate: end, leaveReason: reason }, currentUser);
+      }
+      function downloadCsv(filename, csv) { const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
+      function downloadDarwinBoxExport() { google.script.run.withSuccessHandler(function(result) { if (!result.success) { showMessage(result.message, true); return; } downloadCsv(result.fileName, result.csv); }).buildDarwinBoxExportCsv(); }
+      function runDarwinBoxImport() { google.script.run.withSuccessHandler(function(result) { showMessage(result && result.message ? result.message : 'Import completed.'); }).importDarwinBoxLeaves(); }
+      function runShiftImport() { google.script.run.withSuccessHandler(function(result) { showMessage(result && result.message ? result.message : 'Shift update completed.'); }).processShiftFiles(); }
+      function downloadBalanceReport() { google.script.run.withSuccessHandler(function(csv) { downloadCsv('Leave_Balance_Report.csv', csv); }).buildBalanceReportCsv(); }
     </script>
   </body>
 </html>
