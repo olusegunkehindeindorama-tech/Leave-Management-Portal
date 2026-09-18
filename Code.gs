@@ -60,13 +60,11 @@ function getHeaderIndex_(headers, names) {
   return -1;
 }
 
-/** Fast form payload: cached emp + single-emp balance */
 function getEmployeeForForm(empId) {
   var search = String(empId).trim().toUpperCase();
   var empMap = loadEmployeeMapCached_();
   var emp = empMap[search];
   if (!emp) {
-    // partial unique match
     var partials = [];
     Object.keys(empMap).forEach(function(id) {
       if (id === '_headers') return;
@@ -89,7 +87,6 @@ function getEmployeeForForm(empId) {
   if (balancePayload.error) return balancePayload;
 
   var balances = [];
-  // Show on balance table only where Balance Page Show = Yes; dropdown gets ALL entitled
   Object.keys(balancePayload.balances || {}).forEach(function(type) {
     var d = (balancePayload.detail && balancePayload.detail[type]) ? balancePayload.detail[type] : {};
     balances.push({
@@ -278,7 +275,7 @@ function buildLeaveRecordsCsv(filters) {
   return arrayToCsv_(out);
 }
 
-/** Shift calendar + leave overlays for the month */
+/** Shift calendar + leave overlays — uses loadShiftMapForEmp_ (wide or long). */
 function getShiftCalendar(empId, year, month) {
   year = Number(year) || new Date().getFullYear();
   month = Number(month) || (new Date().getMonth() + 1);
@@ -307,7 +304,7 @@ function getShiftCalendar(empId, year, month) {
   var days = [];
   for (var day = 1; day <= daysInMonth; day++) {
     var dt = new Date(year, month - 1, day);
-    var key = Utilities.formatDate(dt, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    var key = dt.getFullYear() + '-' + ('0' + (dt.getMonth() + 1)).slice(-2) + '-' + ('0' + dt.getDate()).slice(-2);
     days.push({
       date: key,
       day: day,
@@ -319,19 +316,70 @@ function getShiftCalendar(empId, year, month) {
   return { year: year, month: month, empId: target, days: days };
 }
 
+/**
+ * Update one shift cell. Supports WIDE tblShift (Emp ID | date columns).
+ * Falls back to legacy LONG append if sheet is still long-format.
+ */
 function updateShiftCode(empId, dateStr, shiftCode, userSession) {
   var shiftSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('tblShift');
   if (!shiftSheet) return { success: false, message: 'tblShift not found.' };
+
   var data = shiftSheet.getDataRange().getValues();
+  if (data.length < 1) return { success: false, message: 'tblShift empty.' };
+
   var target = String(empId).trim().toUpperCase();
-  var targetKey = Utilities.formatDate(new Date(dateStr), Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  var found = -1;
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][0]).trim().toUpperCase() !== target) continue;
-    var d = new Date(data[i][1]);
-    if (!isNaN(d) && Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd') === targetKey) { found = i + 1; break; }
-  }
+  var d = new Date(dateStr);
+  var targetKey = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
   var code = String(shiftCode || '').trim().toUpperCase();
+
+  var h1 = String(data[0][1] || '').trim();
+  var isWide = /^\d{4}-\d{2}-\d{2}/.test(h1) ||
+    (String(data[0][0] || '').toLowerCase().indexOf('emp') === 0 && h1.toLowerCase() !== 'date');
+
+  if (isWide) {
+    // Find date column
+    var col = -1;
+    for (var c = 1; c < data[0].length; c++) {
+      var hs = String(data[0][c] || '').trim().substring(0, 10);
+      if (hs === targetKey) { col = c + 1; break; }
+    }
+    // Find emp row
+    var row = -1;
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][0] || '').trim().toUpperCase() === target) { row = i + 1; break; }
+    }
+
+    if (col < 0 && code) {
+      // Add new date column at end
+      col = data[0].length + 1;
+      if (col > shiftSheet.getMaxColumns()) shiftSheet.insertColumnsAfter(shiftSheet.getMaxColumns(), 1);
+      shiftSheet.getRange(1, col).setValue(targetKey);
+    }
+    if (row < 0 && code) {
+      row = data.length + 1;
+      shiftSheet.getRange(row, 1).setValue(target);
+    }
+    if (row > 0 && col > 0) {
+      shiftSheet.getRange(row, col).setValue(code || '');
+      invalidateEmpCaches_(target);
+      return { success: true, message: code ? ('Shift updated to ' + code) : 'Shift cleared' };
+    }
+    return { success: true, message: 'Nothing to update' };
+  }
+
+  // Legacy LONG
+  var found = -1;
+  for (var j = 1; j < data.length; j++) {
+    if (String(data[j][0]).trim().toUpperCase() !== target) continue;
+    var dd = data[j][1];
+    var ks;
+    if (dd instanceof Date) {
+      ks = dd.getFullYear() + '-' + ('0' + (dd.getMonth() + 1)).slice(-2) + '-' + ('0' + dd.getDate()).slice(-2);
+    } else {
+      ks = String(dd || '').trim().substring(0, 10);
+    }
+    if (ks === targetKey) { found = j + 1; break; }
+  }
   if (found > -1) {
     if (!code) { shiftSheet.deleteRow(found); invalidateEmpCaches_(target); return { success: true, message: 'Shift cleared' }; }
     shiftSheet.getRange(found, 3).setValue(code);
