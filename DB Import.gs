@@ -1,216 +1,352 @@
-
 /**
- * IMPORT DARWINBOX LEAVES (Dynamic Column & Strict Policy Mapping)
- * Optimized for automated background triggers.
+ * ============================================================
+ *  LEAVE IMPORT HELPERS + DARWINBOX IMPORT (trigger-friendly)
+ * ============================================================
+ *  Source: Leave_Application.csv in folder LEAVE_CSV_FOLDER_ID
+ *  Target: tblLeave — append only rows not already present
+ *  Dedup key: EmpID|yyyy-MM-dd|yyyy-MM-dd  (and Entry Code when present)
+ *
+ *  Does NOT compute No of Days / Leave Utilized / Entitlement Year
+ *  (run calculateLeaveUtilized later).
+ * ============================================================
  */
+
+var LEAVE_CSV_FOLDER_ID = '1DZ2MYPvTR1HMSVUIE3fcCIBVLyrBqxD1';
+var DARWINBOX_CSV_NAME = 'Leave_Application.csv';
+
+/** Trigger entry point — Darwinbox only. */
 function importDarwinBoxLeaves() {
+  return importDarwinBoxLeaves_();
+}
+
+function importDarwinBoxLeaves_() {
+  var started = new Date().getTime();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var folderId = "1DZ2MYPvTR1HMSVUIE3fcCIBVLyrBqxD1";
-
   var leaveSheet = ss.getSheetByName('tblLeave');
-  var empSheet = ss.getSheetByName('tblEmployee');
-  var policySheet = ss.getSheetByName('Sys_LeavePolicies');
-
-  if (!leaveSheet || !empSheet || !policySheet) {
-    console.error("Error: Missing required sheets ('tblLeave', 'tblEmployee', or 'Sys_LeavePolicies').");
-    return;
+  if (!leaveSheet) {
+    return { success: false, message: 'tblLeave sheet missing.' };
   }
 
-  // ==========================================
-  // 1. CSV HEADER CONFIGURATION
-  // ==========================================
-  var csvHeadConfig = {
-    empId: "Employee Id",
-    empName: "Employee Name",
-    startDate: "Leave From Date",
-    endDate: "Leave To Date",
-    status: "Status",
-    appliedOn: "Applied On",
-    leaveType: "Leave Type",
-    comment: "Employee Comment"
+  var ctx = loadLeaveImportContext_(leaveSheet);
+  if (!ctx.success) return ctx;
+
+  var csvResult = loadCsvFromFolder_(LEAVE_CSV_FOLDER_ID, DARWINBOX_CSV_NAME);
+  if (!csvResult.success) return csvResult;
+
+  var rows = csvResult.rows;
+  var headers = csvResult.headers;
+
+  var idx = {
+    empId: findHeader_(headers, ['Employee Id', 'Employee ID', 'Emp ID']),
+    empName: findHeader_(headers, ['Employee Name', 'Emp Name']),
+    start: findHeader_(headers, ['Leave From Date', 'From Date', 'Start Date']),
+    end: findHeader_(headers, ['Leave To Date', 'To Date', 'End Date']),
+    status: findHeader_(headers, ['Status']),
+    applied: findHeader_(headers, ['Applied On', 'Applied Date']),
+    leaveType: findHeader_(headers, ['Leave Type']),
+    comment: findHeader_(headers, ['Employee Comment', 'Comment', 'Reason'])
   };
 
-  // 2. Get the DarwinBox CSV file
-  var folder = DriveApp.getFolderById(folderId);
-  var files = folder.getFilesByName("Leave_Application.csv");
-  if (!files.hasNext()) {
-    console.error("Error: File 'Leave_Application.csv' not found in the specified folder.");
-    return;
-  }
-  var file = files.next();
-  var csvData = Utilities.parseCsv(file.getBlob().getDataAsString());
-
-  // Extract and clean CSV headers (removes trailing spaces)
-  var rawCsvHeaders = csvData.shift();
-  var csvHeaders = rawCsvHeaders.map(function(h) { return String(h).trim(); });
-
-  // Find dynamic CSV Column Indices
-  var cEmpIdIdx = csvHeaders.indexOf(csvHeadConfig.empId);
-  var cNameIdx = csvHeaders.indexOf(csvHeadConfig.empName);
-  var cStartIdx = csvHeaders.indexOf(csvHeadConfig.startDate);
-  var cEndIdx = csvHeaders.indexOf(csvHeadConfig.endDate);
-  var cStatusIdx = csvHeaders.indexOf(csvHeadConfig.status);
-  var cAppliedIdx = csvHeaders.indexOf(csvHeadConfig.appliedOn);
-  var cTypeIdx = csvHeaders.indexOf(csvHeadConfig.leaveType);
-  var cCommentIdx = csvHeaders.indexOf(csvHeadConfig.comment);
-
-  if (cEmpIdIdx === -1 || cStartIdx === -1 || cTypeIdx === -1) {
-    console.error("Error: Could not find required columns in the CSV. Please check the 'csvHeadConfig' names.");
-    return;
+  if (idx.empId < 0 || idx.start < 0 || idx.end < 0 || idx.leaveType < 0) {
+    return {
+      success: false,
+      message: 'Darwinbox CSV missing required columns. Found: ' + headers.join(', ')
+    };
   }
 
-  // 3. Load Policy Map (Cleaned & Trimmed)
-  var policyData = policySheet.getDataRange().getValues();
-  var rawPHeaders = policyData.shift();
-  var pHeaders = rawPHeaders.map(function(h) { return String(h).trim(); });
+  var newRows = [];
+  var skippedStatus = 0;
+  var skippedDup = 0;
+  var skippedBad = 0;
 
-  var pDBTypeIdx = pHeaders.indexOf("DB Leave Name");
-  var pDBCodeIdx = pHeaders.indexOf("DB Leave Code");
-  var pStdTypeIdx = pHeaders.indexOf("Leave Type");
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    if (!row || !row.length) continue;
 
-  if (pDBTypeIdx === -1 || pStdTypeIdx === -1) {
-    console.error("Error: Could not find 'DB Leave Name' or 'Leave Type' in Sys_LeavePolicies headers.");
-    return;
+    // Approved only
+    if (idx.status >= 0 && String(row[idx.status] || '').trim() !== 'Approved') {
+      skippedStatus++;
+      continue;
+    }
+
+    var empId = String(row[idx.empId] || '').trim().toUpperCase();
+    var startDate = parseLeaveDate_(row[idx.start]);
+    var endDate = parseLeaveDate_(row[idx.end]);
+    if (!empId || !startDate || !endDate) {
+      skippedBad++;
+      continue;
+    }
+
+    var fp = fingerprintKey_(empId, startDate, endDate);
+    if (ctx.existingKeys[fp]) {
+      skippedDup++;
+      continue;
+    }
+
+    var empInfo = ctx.empMap[empId] || { bu: '', cat: '', dept: '', name: '' };
+    var dbTypeRaw = String(row[idx.leaveType] || '').trim();
+    var mapped = ctx.policyMap[dbTypeRaw.toLowerCase()] || {
+      stdType: dbTypeRaw,
+      dbCode: ''
+    };
+
+    var empName = idx.empName >= 0 ? String(row[idx.empName] || '').trim() : '';
+    if (!empName) empName = empInfo.name || '';
+
+    var newRow = buildBlankLeaveRow_(ctx.lHeaders);
+    setLeaveCol_(newRow, ctx.lHeaders, 'Entry Code', 'DB-' + Date.now() + '-' + i);
+    setLeaveCol_(newRow, ctx.lHeaders, 'Leave Code', mapped.dbCode);
+    setLeaveCol_(newRow, ctx.lHeaders, 'Emp ID', empId);
+    setLeaveCol_(newRow, ctx.lHeaders, 'Emp Name', empName);
+    setLeaveCol_(newRow, ctx.lHeaders, 'Department', empInfo.dept);
+    setLeaveCol_(newRow, ctx.lHeaders, 'Category', empInfo.cat);
+    setLeaveCol_(newRow, ctx.lHeaders, 'Leave Type', mapped.stdType);
+    setLeaveCol_(newRow, ctx.lHeaders, 'Start Date', startDate);
+    setLeaveCol_(newRow, ctx.lHeaders, 'End Date', endDate);
+    setLeaveCol_(newRow, ctx.lHeaders, 'Leave Reason',
+      idx.comment >= 0 ? String(row[idx.comment] || '').trim() : '');
+    // No of Days / Leave Utilized / Entitlement Year left blank intentionally
+    setLeaveCol_(newRow, ctx.lHeaders, 'Date Entered',
+      idx.applied >= 0 ? (parseLeaveDate_(row[idx.applied]) || new Date()) : new Date());
+    setLeaveCol_(newRow, ctx.lHeaders, 'Entered By', 'Darwinbox');
+    setLeaveCol_(newRow, ctx.lHeaders, 'BU', empInfo.bu);
+    setLeaveCol_(newRow, ctx.lHeaders, 'DB Remark', 'Original');
+    setLeaveCol_(newRow, ctx.lHeaders, 'Upload Date', new Date());
+    setLeaveCol_(newRow, ctx.lHeaders, 'Uploaded By', 'Automation');
+
+    newRows.push(newRow);
+    ctx.existingKeys[fp] = true;
   }
 
+  if (newRows.length) {
+    appendLeaveRows_(leaveSheet, newRows);
+  }
+
+  var ms = new Date().getTime() - started;
+  var msg = 'Darwinbox import: +' + newRows.length + ' new (skipped dup ' +
+    skippedDup + ', not-approved ' + skippedStatus + ', bad ' + skippedBad +
+    ') in ' + ms + ' ms.';
+  Logger.log(msg);
+  return {
+    success: true,
+    message: msg,
+    added: newRows.length,
+    skippedDup: skippedDup,
+    skippedStatus: skippedStatus,
+    elapsedMs: ms
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers (used by Darwinbox + Excel importers)
+// ---------------------------------------------------------------------------
+
+function loadLeaveImportContext_(leaveSheet) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var empSheet = ss.getSheetByName('tblEmployee') || ss.getSheetByName('tblemployee');
+  var policySheet = ss.getSheetByName('Sys_LeavePolicies');
+
+  if (!empSheet) {
+    return { success: false, message: 'tblEmployee sheet missing.' };
+  }
+
+  // Policies
   var policyMap = {};
-  for (var p = 0; p < policyData.length; p++) {
-    var dbName = String(policyData[p][pDBTypeIdx]).trim().toLowerCase();
-    if (dbName) {
-      policyMap[dbName] = {
-        stdType: String(policyData[p][pStdTypeIdx]).trim(), // Keeps full written terms as preferred
-        dbCode: pDBCodeIdx !== -1 ? String(policyData[p][pDBCodeIdx]).trim() : ""
-      };
+  if (policySheet) {
+    var pData = policySheet.getDataRange().getValues();
+    if (pData.length > 1) {
+      var pH = pData[0].map(function (h) { return String(h).trim(); });
+      var pDBName = findHeader_(pH, ['DB Leave Name']);
+      var pDBCode = findHeader_(pH, ['DB Leave Code', 'Leave Code']);
+      var pStd = findHeader_(pH, ['Leave Type']);
+      for (var p = 1; p < pData.length; p++) {
+        var dbName = pDBName >= 0 ? String(pData[p][pDBName] || '').trim().toLowerCase() : '';
+        if (!dbName) continue;
+        policyMap[dbName] = {
+          stdType: pStd >= 0 ? String(pData[p][pStd] || '').trim() : '',
+          dbCode: pDBCode >= 0 ? String(pData[p][pDBCode] || '').trim() : ''
+        };
+      }
     }
   }
 
-  // 4. Load Employee Map (Cleaned)
-  var empData = empSheet.getDataRange().getValues();
-  var eHeaders = empData.shift().map(function(h) { return String(h).trim(); });
-  var eIdIdx = eHeaders.indexOf("Emp ID");
-  var eBuIdx = eHeaders.indexOf("Business Unit");
-  var eCatIdx = eHeaders.indexOf("Category");
-  var eDeptIdx = eHeaders.indexOf("Department");
-
+  // Employees
   var empMap = {};
-  for (var e = 0; e < empData.length; e++) {
-    var eId = String(empData[e][eIdIdx]).trim().toUpperCase();
-    if (eId) {
-      empMap[eId] = {
-        bu: eBuIdx !== -1 ? String(empData[e][eBuIdx]) : "",
-        cat: eCatIdx !== -1 ? String(empData[e][eCatIdx]) : "",
-        dept: eDeptIdx !== -1 ? String(empData[e][eDeptIdx]) : ""
+  var eData = empSheet.getDataRange().getValues();
+  if (eData.length > 1) {
+    var eH = eData[0].map(function (h) { return String(h).trim(); });
+    var eId = findHeader_(eH, ['Emp ID', 'Employee ID']);
+    var eName = findHeader_(eH, ['Emp Name', 'Employee Name', 'Name']);
+    var eBu = findHeader_(eH, ['Business Unit', 'BU']);
+    var eCat = findHeader_(eH, ['Category']);
+    var eDept = findHeader_(eH, ['Department', 'Dept']);
+    for (var e = 1; e < eData.length; e++) {
+      var id = eId >= 0 ? String(eData[e][eId] || '').trim().toUpperCase() : '';
+      if (!id) continue;
+      empMap[id] = {
+        name: eName >= 0 ? String(eData[e][eName] || '').trim() : '',
+        bu: eBu >= 0 ? String(eData[e][eBu] || '').trim() : '',
+        cat: eCat >= 0 ? String(eData[e][eCat] || '').trim() : '',
+        dept: eDept >= 0 ? String(eData[e][eDept] || '').trim() : ''
       };
     }
   }
 
-  // 5. Load tblLeave into Memory & Build Deduplication Dictionary
-  var rawLeaveData = leaveSheet.getDataRange().getValues();
-  var lHeaders = rawLeaveData[0].map(function(h) { return String(h).trim(); });
-  var lEmpIdx = lHeaders.indexOf("Emp ID");
-  var lStartIdx = lHeaders.indexOf("Start Date");
-  var lEndIdx = lHeaders.indexOf("End Date");
+  // Existing leave keys
+  var leaveData = leaveSheet.getDataRange().getValues();
+  var lHeaders = leaveData.length
+    ? leaveData[0].map(function (h) { return String(h).trim(); })
+    : defaultLeaveHeaders_();
 
-  var leaveDataMemory = [];
+  if (!leaveData.length) {
+    leaveSheet.getRange(1, 1, 1, lHeaders.length).setValues([lHeaders]);
+  }
+
+  var lEmp = findHeader_(lHeaders, ['Emp ID']);
+  var lStart = findHeader_(lHeaders, ['Start Date']);
+  var lEnd = findHeader_(lHeaders, ['End Date']);
+  var lEntry = findHeader_(lHeaders, ['Entry Code']);
+
   var existingKeys = {};
+  var existingEntryCodes = {};
 
-  for (var r = 0; r < rawLeaveData.length; r++) {
-    var row = rawLeaveData[r];
-    if (r > 0 && String(row[lEmpIdx]).trim() === "") continue;
-
-    leaveDataMemory.push(row);
-
-    if (r > 0) {
-      var empIdStr = String(row[lEmpIdx]).trim().toUpperCase();
-      var sDate = new Date(row[lStartIdx]);
-      var eDate = new Date(row[lEndIdx]);
-
-      if (empIdStr && !isNaN(sDate.getTime()) && !isNaN(eDate.getTime())) {
-        // Relies on formatDateKey being available globally in the project
-        var key = empIdStr + "_" + formatDateKey(sDate) + "_" + formatDateKey(eDate);
-        existingKeys[key] = true;
-      }
+  for (var r = 1; r < leaveData.length; r++) {
+    var emp = lEmp >= 0 ? String(leaveData[r][lEmp] || '').trim().toUpperCase() : '';
+    if (!emp) continue;
+    var s = lStart >= 0 ? parseLeaveDate_(leaveData[r][lStart]) : null;
+    var en = lEnd >= 0 ? parseLeaveDate_(leaveData[r][lEnd]) : null;
+    if (s && en) existingKeys[fingerprintKey_(emp, s, en)] = true;
+    if (lEntry >= 0) {
+      var code = String(leaveData[r][lEntry] || '').trim().toUpperCase();
+      if (code) existingEntryCodes[code] = true;
     }
   }
 
-  // 6. Process CSV dynamically and Push New Rows
-  var newRowsCount = 0;
+  return {
+    success: true,
+    empMap: empMap,
+    policyMap: policyMap,
+    lHeaders: lHeaders,
+    existingKeys: existingKeys,
+    existingEntryCodes: existingEntryCodes
+  };
+}
 
-  for (var i = 0; i < csvData.length; i++) {
-    var row = csvData[i];
+function defaultLeaveHeaders_() {
+  return [
+    'Entry Code', 'Leave Code', 'Emp ID', 'Emp Name', 'Department', 'Category',
+    'Leave Type', 'Start Date', 'End Date', 'Leave Reason', 'No of Days',
+    'Leave Utilized', 'Entitlement Year', 'Date Entered', 'Entered By',
+    'Date Modified', 'Modified By', 'BU', 'DB Remark', 'Upload Date', 'Uploaded By'
+  ];
+}
 
-    if (cStatusIdx !== -1 && String(row[cStatusIdx]).trim() !== "Approved") continue;
+function buildBlankLeaveRow_(headers) {
+  var row = [];
+  for (var i = 0; i < headers.length; i++) row.push('');
+  return row;
+}
 
-    var empId = String(row[cEmpIdIdx]).trim().toUpperCase();
-    var startDate = new Date(row[cStartIdx]);
-    var endDate = new Date(row[cEndIdx]);
+function setLeaveCol_(row, headers, name, value) {
+  var i = headers.indexOf(name);
+  if (i >= 0) row[i] = value;
+}
 
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) continue;
+function fingerprintKey_(empId, startDate, endDate) {
+  return String(empId).toUpperCase() + '|' +
+    formatDateKey(startDate) + '|' + formatDateKey(endDate);
+}
 
-    var fingerprintKey = empId + "_" + formatDateKey(startDate) + "_" + formatDateKey(endDate);
-
-    if (!existingKeys[fingerprintKey]) {
-      var empInfo = empMap[empId] || {bu: "", cat: "", dept: ""};
-
-      // Perform strict Policy Lookup
-      var dbLeaveTypeRaw = String(row[cTypeIdx]).trim();
-      var mappedPolicy = policyMap[dbLeaveTypeRaw.toLowerCase()];
-
-      // If no match found in Sys_LeavePolicies, fallback to original CSV strings to avoid blanks
-      if (!mappedPolicy) {
-        mappedPolicy = { stdType: dbLeaveTypeRaw, dbCode: "" };
-      }
-
-      var newRow = [];
-      newRow[lHeaders.indexOf("Entry Code")] = "DB-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
-      newRow[lHeaders.indexOf("Leave Code")] = mappedPolicy.dbCode;
-      newRow[lHeaders.indexOf("Emp ID")] = empId;
-      newRow[lHeaders.indexOf("Emp Name")] = cNameIdx !== -1 ? row[cNameIdx] : "";
-      newRow[lHeaders.indexOf("Department")] = empInfo.dept;
-      newRow[lHeaders.indexOf("Category")] = empInfo.cat;
-      newRow[lHeaders.indexOf("Leave Type")] = mappedPolicy.stdType;
-      newRow[lHeaders.indexOf("Start Date")] = startDate;
-      newRow[lHeaders.indexOf("End Date")] = endDate;
-      newRow[lHeaders.indexOf("Leave Reason")] = cCommentIdx !== -1 ? row[cCommentIdx] : "";
-      newRow[lHeaders.indexOf("No of Days")] = "";
-      newRow[lHeaders.indexOf("Leave Utilized")] = "";
-      newRow[lHeaders.indexOf("Entitlement Year")] = "";
-      newRow[lHeaders.indexOf("Date Entered")] = cAppliedIdx !== -1 ? new Date(row[cAppliedIdx]) : "";
-      newRow[lHeaders.indexOf("Entered By")] = "Darwinbox";
-      newRow[lHeaders.indexOf("Date Modified")] = "";
-      newRow[lHeaders.indexOf("Modified By")] = "";
-      newRow[lHeaders.indexOf("BU")] = empInfo.bu;
-      newRow[lHeaders.indexOf("DB Remark")] = "Original";
-      newRow[lHeaders.indexOf("Upload Date")] = new Date();
-      var uploadByIdx = lHeaders.indexOf("Uploaded By") !== -1 ? lHeaders.indexOf("Uploaded By") : lHeaders.indexOf("Upload By");
-      if (uploadByIdx !== -1) newRow[uploadByIdx] = "Automation";
-
-      for (var col = 0; col < lHeaders.length; col++) {
-        if (newRow[col] === undefined) newRow[col] = "";
-      }
-
-      leaveDataMemory.push(newRow);
-      existingKeys[fingerprintKey] = true;
-      newRowsCount++;
+function findHeader_(headers, names) {
+  for (var n = 0; n < names.length; n++) {
+    var want = names[n].toLowerCase();
+    for (var i = 0; i < headers.length; i++) {
+      if (String(headers[i] || '').trim().toLowerCase() === want) return i;
     }
   }
+  return -1;
+}
 
-  // 7. Bulk Write with Capacity Checking
-  if (newRowsCount > 0) {
-    var requiredRows = leaveDataMemory.length;
-    var maxRows = leaveSheet.getMaxRows();
-
-    if (requiredRows > maxRows) {
-      leaveSheet.insertRowsAfter(maxRows, requiredRows - maxRows + 10);
+function loadCsvFromFolder_(folderId, fileName) {
+  try {
+    var folder = DriveApp.getFolderById(folderId);
+    var files = folder.getFilesByName(fileName);
+    if (!files.hasNext()) {
+      return { success: false, message: 'CSV not found: "' + fileName + '"' };
     }
+    var file = files.next();
+    while (files.hasNext()) {
+      var f2 = files.next();
+      if (f2.getLastUpdated() > file.getLastUpdated()) file = f2;
+    }
+    var parsed = Utilities.parseCsv(file.getBlob().getDataAsString());
+    if (!parsed || parsed.length < 2) {
+      return { success: false, message: 'CSV empty: ' + fileName };
+    }
+    var headers = parsed[0].map(function (h) { return String(h || '').trim(); });
+    return { success: true, headers: headers, rows: parsed.slice(1), fileName: file.getName() };
+  } catch (err) {
+    return { success: false, message: 'CSV load error: ' + err.message };
+  }
+}
 
-    leaveSheet.clearContents();
-    leaveSheet.getRange(1, 1, leaveDataMemory.length, leaveDataMemory[0].length).setValues(leaveDataMemory);
+/**
+ * Parse many date shapes: Date, ISO, dd-MMM-yyyy, dd/MM/yyyy, Excel serial.
+ */
+function parseLeaveDate_(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return new Date(val.getFullYear(), val.getMonth(), val.getDate());
+  }
+  // Excel serial number
+  if (typeof val === 'number' || (/^\d+(\.\d+)?$/.test(String(val).trim()) && Number(val) > 20000 && Number(val) < 80000)) {
+    return excelSerialToDate_(Number(val));
+  }
+  var s = String(val).trim();
+  // ISO yyyy-MM-dd
+  var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  // dd-MMM-yyyy (Darwinbox)
+  var mon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})/);
+  if (mon) {
+    var months = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+    };
+    var mi = months[mon[2].toLowerCase()];
+    if (mi !== undefined) return new Date(Number(mon[3]), mi, Number(mon[1]));
+  }
+  // dd/MM/yyyy or MM/dd/yyyy — prefer dd/MM when day > 12
+  var slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (slash) {
+    var a = Number(slash[1]), b = Number(slash[2]), y = Number(slash[3]);
+    if (a > 12) return new Date(y, b - 1, a); // dd/MM
+    return new Date(y, b - 1, a); // treat as dd/MM (NG locale)
+  }
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  return null;
+}
 
-    console.log(newRowsCount + " new DB records imported successfully.");
-    return { success: true, message: newRowsCount + " new DB records imported successfully." };
-  } else {
-    console.log("No new approved leave records found to import.");
-    return { success: true, message: "No new approved leave records found to import." };
+function excelSerialToDate_(serial) {
+  // Excel epoch 1899-12-30 (Sheets-compatible)
+  var epoch = new Date(1899, 11, 30);
+  var whole = Math.floor(serial);
+  var d = new Date(epoch.getTime() + whole * 86400000);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** Append rows only — does not rewrite the whole sheet. */
+function appendLeaveRows_(sheet, rows) {
+  if (!rows || !rows.length) return;
+  var startRow = Math.max(sheet.getLastRow() + 1, 2);
+  var cols = rows[0].length;
+  var need = startRow + rows.length - 1 - sheet.getMaxRows();
+  if (need > 0) sheet.insertRowsAfter(sheet.getMaxRows(), need + 10);
+
+  var CHUNK = 5000;
+  for (var i = 0; i < rows.length; i += CHUNK) {
+    var part = rows.slice(i, i + CHUNK);
+    sheet.getRange(startRow + i, 1, part.length, cols).setValues(part);
   }
 }
