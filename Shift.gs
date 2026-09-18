@@ -14,13 +14,13 @@
  *   3. Drop date columns / long rows before retention cutoff
  *   4. Drop everything in [csvMin, csvMax] (range replace)
  *   5. Apply CSV into grid
- *   6. Write wide sheet in one clear + chunked setValues
+ *   6. Recreate sheet (drops 300k ghost rows) then write wide matrix
  * ============================================================
  */
 
 var EMP_SHIFT_FOLDER_ID = '1DZ2MYPvTR1HMSVUIE3fcCIBVLyrBqxD1';
 var EMP_SHIFT_CSV_NAME = 'Employee Shift.csv';
-var SHIFT_WRITE_CHUNK_ROWS = 500; // rows per setValues (wide rows are wide)
+var SHIFT_WRITE_CHUNK_ROWS = 500;
 
 function processShiftFiles() {
   return syncShiftsFromCsv();
@@ -28,7 +28,7 @@ function processShiftFiles() {
 
 function syncShiftsFromCsv() {
   var started = new Date().getTime();
-  var cutoff = shiftRetentionCutoff_(); // Date, 1st of month 12 months ago
+  var cutoff = shiftRetentionCutoff_();
   var cutoffStr = ymd_(cutoff);
 
   // ---- 1. CSV ----
@@ -40,7 +40,7 @@ function syncShiftsFromCsv() {
     ', dates ' + csv.minDate + ' → ' + csv.maxDate +
     ' (' + (new Date().getTime() - started) + ' ms)');
 
-  // ---- 2. Existing → grid { empId: { dateStr: shift } } ----
+  // ---- 2. Existing → grid ----
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblShift');
   if (!sheet) sheet = ss.insertSheet('tblShift');
@@ -49,7 +49,7 @@ function syncShiftsFromCsv() {
   Logger.log('Existing grid emps: ' + Object.keys(grid).length +
     ' (' + (new Date().getTime() - started) + ' ms)');
 
-  // ---- 3. Apply CSV (overwrites range) ----
+  // ---- 3. Apply CSV ----
   var empIds = Object.keys(csv.byEmp);
   for (var i = 0; i < empIds.length; i++) {
     var empId = empIds[i];
@@ -88,15 +88,8 @@ function syncShiftsFromCsv() {
   Logger.log('Wide matrix: ' + (out.length - 1) + ' emps × ' + dateList.length +
     ' dates (' + (new Date().getTime() - started) + ' ms)');
 
-  // ---- 5. Write ----
-  sheet.clearContents();
-  // Clear excess columns from prior runs
-  try {
-    var maxCols = sheet.getMaxColumns();
-    if (maxCols > headers.length) {
-      sheet.deleteColumns(headers.length + 1, maxCols - headers.length);
-    }
-  } catch (e) {}
+  // ---- 5. Recreate sheet (kills 300k leftover rows that inflate cell count) ----
+  sheet = resetTblShiftSheet_(ss, sheet);
   writeWideChunked_(sheet, out);
   SpreadsheetApp.flush();
 
@@ -122,13 +115,43 @@ function syncShiftsFromCsv() {
   };
 }
 
-/** 1st of current month, 12 months ago. */
+/**
+ * Replace tblShift with a fresh sheet so ~291k ghost rows cannot expand
+ * into millions of cells when we add ~273 date columns.
+ * Falls back to clear + deleteRows below 2000 if deleteSheet is blocked.
+ */
+function resetTblShiftSheet_(ss, sheet) {
+  var name = 'tblShift';
+  var idx = sheet.getIndex(); // 1-based
+
+  try {
+    ss.deleteSheet(sheet);
+    var fresh = ss.insertSheet(name, Math.max(0, idx - 1));
+    Logger.log('tblShift recreated at index ' + idx);
+    return fresh;
+  } catch (err) {
+    Logger.log('deleteSheet failed (' + err.message + '); trimming rows instead');
+    sheet.clearContents();
+    sheet.clearFormats();
+    // Drop every row below 2000 (wide data needs far fewer)
+    var maxRows = sheet.getMaxRows();
+    if (maxRows > 2000) {
+      sheet.deleteRows(2001, maxRows - 2000);
+    }
+    // Drop excess columns beyond a safe buffer
+    var maxCols = sheet.getMaxColumns();
+    if (maxCols > 400) {
+      sheet.deleteColumns(401, maxCols - 400);
+    }
+    return sheet;
+  }
+}
+
 function shiftRetentionCutoff_() {
   var now = new Date();
   return new Date(now.getFullYear() - 1, now.getMonth(), 1);
 }
 
-/** Fast yyyy-MM-dd without Utilities.formatDate (critical in tight loops). */
 function ymd_(d) {
   return d.getFullYear() + '-' +
     ('0' + (d.getMonth() + 1)).slice(-2) + '-' +
@@ -146,13 +169,6 @@ function ymdFromAny_(val) {
   return ymd_(d);
 }
 
-/**
- * Load existing tblShift into grid.
- * Supports:
- *  - WIDE: header Emp ID | yyyy-MM-dd | ...
- *  - LONG (legacy): Emp ID | Date | Shift
- * Drops dates < cutoff and dates in [csvMin, csvMax] inclusive.
- */
 function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
   var grid = {};
   var data = sheet.getDataRange().getValues();
@@ -161,15 +177,13 @@ function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
   var h0 = String(data[0][0] || '').trim().toLowerCase();
   var h1 = String(data[0][1] || '').trim();
 
-  // WIDE if col2 looks like a date header
   var isWide = /^\d{4}-\d{2}-\d{2}/.test(h1) ||
     (h0.indexOf('emp') === 0 && h1.toLowerCase() !== 'date');
 
   if (isWide) {
     var dateHeaders = [];
     for (var c = 1; c < data[0].length; c++) {
-      var ds = ymdFromAny_(data[0][c]);
-      dateHeaders.push(ds); // may be null for blank cols
+      dateHeaders.push(ymdFromAny_(data[0][c]));
     }
     for (var r = 1; r < data.length; r++) {
       var empId = String(data[r][0] || '').trim().toUpperCase();
@@ -187,7 +201,6 @@ function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
     return grid;
   }
 
-  // LONG legacy: Emp ID | Date | Shift
   for (var i = 1; i < data.length; i++) {
     var emp = String(data[i][0] || '').trim().toUpperCase();
     if (!emp) continue;
@@ -203,10 +216,6 @@ function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
   return grid;
 }
 
-/**
- * CSV → { byEmp: { EMP: { date: shift } }, minDate, maxDate, ... }
- * Date parsing uses string slice on ISO values (fast).
- */
 function loadEmployeeShiftCsvWide_() {
   try {
     var folder = DriveApp.getFolderById(EMP_SHIFT_FOLDER_ID);
@@ -260,7 +269,6 @@ function loadEmployeeShiftCsvWide_() {
       var empId = String(row[iEmp] || '').trim().toUpperCase();
       if (!empId) continue;
 
-      // Fast path for ISO strings: 2026-07-01T00:00:00
       var rawD = String(row[iDate] || '').trim();
       var dStr = null;
       if (rawD.length >= 10 && rawD.charAt(4) === '-' && rawD.charAt(7) === '-') {
@@ -296,7 +304,8 @@ function loadEmployeeShiftCsvWide_() {
 function writeWideChunked_(sheet, rows) {
   if (!rows || !rows.length) return;
   var cols = rows[0].length;
-  // Ensure sheet has enough columns
+
+  // Fresh sheet has 26 cols by default — expand only as needed
   var need = cols - sheet.getMaxColumns();
   if (need > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), need);
 
