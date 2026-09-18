@@ -1,20 +1,29 @@
 /**
  * ============================================================
- *  SHIFT SYNC — wide (pivoted) tblShift for speed
+ *  SHIFT SYNC — wide (pivoted) tblShift
  * ============================================================
  *  Layout:
  *    Row 1: Emp ID | yyyy-MM-dd | yyyy-MM-dd | ...
  *    Row 2+: empId | shift      | shift      | ...
  *
- *  ~1,200 employee rows × ~365 date columns instead of 300k long rows.
+ *  Every run (manual or trigger) does ALL of the following in memory:
  *
- *  Sync:
- *   1. Load CSV → per-emp shift map + min/max date
- *   2. Load existing sheet (wide or legacy long) into grid
- *   3. Drop date columns / long rows before retention cutoff
- *   4. Drop everything in [csvMin, csvMax] (range replace)
- *   5. Apply CSV into grid
- *   6. Recreate sheet (drops 300k ghost rows) then write wide matrix
+ *  A. RETENTION (columns)
+ *     Keep from the 1st of the current month, 12 months ago.
+ *     e.g. today Aug 2026 → keep from 2025-08-01 (drop through 2025-07-31).
+ *     Date columns older than the cutoff are never written back.
+ *
+ *  B. CSV RANGE REPLACE (columns)
+ *     Dates in [csvMin, csvMax] are removed from the existing grid, then
+ *     the CSV is unpivoted and written as those date columns again.
+ *     Employees are matched by Emp ID.
+ *
+ *  C. EMPTY EMPLOYEE ROWS
+ *     After A + B, any employee with zero remaining shift cells is dropped.
+ *
+ *  D. WRITE
+ *     Sheet is recreated (avoids ghost 300k rows / cell-limit errors),
+ *     then the compact wide matrix is written in one pass.
  * ============================================================
  */
 
@@ -28,10 +37,9 @@ function processShiftFiles() {
 
 function syncShiftsFromCsv() {
   var started = new Date().getTime();
-  var cutoff = shiftRetentionCutoff_();
-  var cutoffStr = ymd_(cutoff);
+  var cutoffStr = ymd_(shiftRetentionCutoff_());
 
-  // ---- 1. CSV ----
+  // ---- 1. CSV (long → per-emp map; min/max for range replace) ----
   var csv = loadEmployeeShiftCsvWide_();
   if (!csv.success) {
     return { success: false, message: csv.message };
@@ -40,16 +48,16 @@ function syncShiftsFromCsv() {
     ', dates ' + csv.minDate + ' → ' + csv.maxDate +
     ' (' + (new Date().getTime() - started) + ' ms)');
 
-  // ---- 2. Existing → grid ----
+  // ---- 2. Existing sheet → grid (already drops < cutoff and CSV range) ----
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblShift');
   if (!sheet) sheet = ss.insertSheet('tblShift');
 
   var grid = loadExistingShiftGrid_(sheet, cutoffStr, csv.minDate, csv.maxDate);
-  Logger.log('Existing grid emps: ' + Object.keys(grid).length +
-    ' (' + (new Date().getTime() - started) + ' ms)');
+  Logger.log('Existing grid emps (after retention + CSV-range drop): ' +
+    Object.keys(grid).length + ' (' + (new Date().getTime() - started) + ' ms)');
 
-  // ---- 3. Apply CSV ----
+  // ---- 3. Unpivot CSV into grid (Emp ID mapped; CSV wins for its dates) ----
   var empIds = Object.keys(csv.byEmp);
   for (var i = 0; i < empIds.length; i++) {
     var empId = empIds[i];
@@ -57,38 +65,61 @@ function syncShiftsFromCsv() {
     var dates = csv.byEmp[empId];
     var dk = Object.keys(dates);
     for (var j = 0; j < dk.length; j++) {
+      // CSV rows older than cutoff were already skipped at load
       grid[empId][dk[j]] = dates[dk[j]];
     }
   }
 
-  // ---- 4. Build wide matrix ----
+  // ---- 4. Build date column list (retention only) + prune empty emps ----
   var allDates = {};
+  var activeEmps = [];
+  var prunedEmps = 0;
   var gEmps = Object.keys(grid);
+
   for (var e = 0; e < gEmps.length; e++) {
-    var ds = Object.keys(grid[gEmps[e]]);
+    var id = gEmps[e];
+    var m = grid[id];
+    var kept = {};
+    var hasData = false;
+    var ds = Object.keys(m);
     for (var d = 0; d < ds.length; d++) {
-      if (ds[d] >= cutoffStr) allDates[ds[d]] = true;
+      var dStr = ds[d];
+      if (dStr < cutoffStr) continue; // retention: drop old columns
+      var code = m[dStr];
+      if (!code) continue;
+      kept[dStr] = code;
+      allDates[dStr] = true;
+      hasData = true;
+    }
+    if (hasData) {
+      grid[id] = kept;
+      activeEmps.push(id);
+    } else {
+      delete grid[id]; // no shifts left in retention window → drop row
+      prunedEmps++;
     }
   }
+
   var dateList = Object.keys(allDates).sort();
-  gEmps.sort();
+  activeEmps.sort();
 
   var headers = ['Emp ID'].concat(dateList);
   var out = [headers];
-  for (var r = 0; r < gEmps.length; r++) {
-    var id = gEmps[r];
-    var row = [id];
-    var m = grid[id];
+  for (var r = 0; r < activeEmps.length; r++) {
+    var eid = activeEmps[r];
+    var row = [eid];
+    var map = grid[eid];
     for (var c = 0; c < dateList.length; c++) {
-      row.push(m[dateList[c]] || '');
+      row.push(map[dateList[c]] || '');
     }
     out.push(row);
   }
 
-  Logger.log('Wide matrix: ' + (out.length - 1) + ' emps × ' + dateList.length +
-    ' dates (' + (new Date().getTime() - started) + ' ms)');
+  Logger.log('Wide matrix: ' + activeEmps.length + ' emps × ' + dateList.length +
+    ' dates (pruned empty emps: ' + prunedEmps + ') (' +
+    (new Date().getTime() - started) + ' ms)');
 
-  // ---- 5. Recreate sheet (kills 300k leftover rows that inflate cell count) ----
+  // ---- 5. Recreate sheet + write ----
   sheet = resetTblShiftSheet_(ss, sheet);
   writeWideChunked_(sheet, out);
   SpreadsheetApp.flush();
@@ -100,29 +131,33 @@ function syncShiftsFromCsv() {
 
   var ms = new Date().getTime() - started;
   var msg = 'Shift wide-sync OK in ' + ms + ' ms. ' +
-    (out.length - 1) + ' employees, ' + dateList.length + ' date columns. ' +
-    'CSV range ' + csv.minDate + '→' + csv.maxDate + ' replaced. Cutoff ' + cutoffStr + '.';
+    activeEmps.length + ' employees, ' + dateList.length + ' date columns' +
+    (dateList.length ? ' (' + dateList[0] + ' → ' + dateList[dateList.length - 1] + ')' : '') +
+    '. CSV range ' + csv.minDate + '→' + csv.maxDate + ' replaced. ' +
+    'Cutoff ' + cutoffStr + '. Empty emp rows pruned: ' + prunedEmps + '.';
   Logger.log(msg);
   return {
     success: true,
     message: msg,
-    employees: out.length - 1,
+    employees: activeEmps.length,
     dates: dateList.length,
+    dateFrom: dateList.length ? dateList[0] : null,
+    dateTo: dateList.length ? dateList[dateList.length - 1] : null,
     csvMin: csv.minDate,
     csvMax: csv.maxDate,
     cutoff: cutoffStr,
+    prunedEmps: prunedEmps,
     elapsedMs: ms
   };
 }
 
 /**
- * Replace tblShift with a fresh sheet so ~291k ghost rows cannot expand
- * into millions of cells when we add ~273 date columns.
- * Falls back to clear + deleteRows below 2000 if deleteSheet is blocked.
+ * Replace tblShift with a fresh sheet so leftover long-format rows cannot
+ * expand into millions of cells when wide columns are added.
  */
 function resetTblShiftSheet_(ss, sheet) {
   var name = 'tblShift';
-  var idx = sheet.getIndex(); // 1-based
+  var idx = sheet.getIndex();
 
   try {
     ss.deleteSheet(sheet);
@@ -133,20 +168,15 @@ function resetTblShiftSheet_(ss, sheet) {
     Logger.log('deleteSheet failed (' + err.message + '); trimming rows instead');
     sheet.clearContents();
     sheet.clearFormats();
-    // Drop every row below 2000 (wide data needs far fewer)
     var maxRows = sheet.getMaxRows();
-    if (maxRows > 2000) {
-      sheet.deleteRows(2001, maxRows - 2000);
-    }
-    // Drop excess columns beyond a safe buffer
+    if (maxRows > 2000) sheet.deleteRows(2001, maxRows - 2000);
     var maxCols = sheet.getMaxColumns();
-    if (maxCols > 400) {
-      sheet.deleteColumns(401, maxCols - 400);
-    }
+    if (maxCols > 400) sheet.deleteColumns(401, maxCols - 400);
     return sheet;
   }
 }
 
+/** 1st of current month, 12 months ago. */
 function shiftRetentionCutoff_() {
   var now = new Date();
   return new Date(now.getFullYear() - 1, now.getMonth(), 1);
@@ -169,6 +199,13 @@ function ymdFromAny_(val) {
   return ymd_(d);
 }
 
+/**
+ * Existing tblShift → grid.
+ * Always applies:
+ *   - drop dates < cutoffStr (retention)
+ *   - drop dates in [csvMin, csvMax] (will be refilled from CSV)
+ * Supports wide and legacy long layouts.
+ */
 function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
   var grid = {};
   var data = sheet.getDataRange().getValues();
@@ -201,6 +238,7 @@ function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
     return grid;
   }
 
+  // Legacy long: Emp ID | Date | Shift
   for (var i = 1; i < data.length; i++) {
     var emp = String(data[i][0] || '').trim().toUpperCase();
     if (!emp) continue;
@@ -216,6 +254,10 @@ function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
   return grid;
 }
 
+/**
+ * CSV long rows → { byEmp, minDate, maxDate }.
+ * Skips shifts older than retention cutoff.
+ */
 function loadEmployeeShiftCsvWide_() {
   try {
     var folder = DriveApp.getFolderById(EMP_SHIFT_FOLDER_ID);
@@ -304,8 +346,6 @@ function loadEmployeeShiftCsvWide_() {
 function writeWideChunked_(sheet, rows) {
   if (!rows || !rows.length) return;
   var cols = rows[0].length;
-
-  // Fresh sheet has 26 cols by default — expand only as needed
   var need = cols - sheet.getMaxColumns();
   if (need > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), need);
 
