@@ -1,29 +1,9 @@
 /**
- * ============================================================
- *  EXCEL LEAVE ENTRIES IMPORT — on-click only (not for triggers)
- * ============================================================
- *  Source: "Excel Leave Entries.csv" in folder LEAVE_CSV_FOLDER_ID
- *  Target: tblLeave — append rows not already present
- *
- *  CSV columns (clean export):
- *    Leave Code, Emp ID, Emp Name, Department, Category, Leave Type,
- *    Start Date, End Date, Leave Reason, Date Entered, Entered By,
- *    Date Modified, Modified By, BU, DB Remark, Upload Date,
- *    Uploaded By, DB Leave Code
- *
- *  Mapping → tblLeave:
- *    Leave Code     → Entry Code
- *    DB Leave Code  → Leave Code
- *    Dates: dd-MMM-yy (31-Mar-26), dd/MM/yyyy HH:mm (26/05/2026 00:00)
- *
- *  Dedup: Entry Code (if present) OR EmpID|Start|End
- *  No of Days / Leave Utilized / Entitlement Year left blank
- * ============================================================
+ * EXCEL LEAVE ENTRIES IMPORT — on-click only
+ * After append: runLeaveCleanupPipeline (overlap → dedupe → recalc)
  */
-
 var EXCEL_LEAVE_CSV_NAME = 'Excel Leave Entries.csv';
 
-/** Manual / on-click entry point. */
 function importExcelLeaveEntries() {
   var started = new Date().getTime();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -62,7 +42,6 @@ function importExcelLeaveEntries() {
     uploadedBy: findHeader_(headers, ['Uploaded By', 'Upload By'])
   };
 
-  // Ensure DB Leave Code is not confused with Leave Code (Entry Code)
   if (idx.entryCode >= 0 && idx.dbLeaveCode === idx.entryCode) {
     idx.dbLeaveCode = -1;
     for (var h = 0; h < headers.length; h++) {
@@ -79,11 +58,6 @@ function importExcelLeaveEntries() {
       message: 'Excel Leave CSV missing Emp ID / Start / End. Found: ' + headers.join(', ')
     };
   }
-
-  Logger.log('Excel CSV columns mapped — Entry:' + idx.entryCode +
-    ' DBCode:' + idx.dbLeaveCode + ' Emp:' + idx.empId +
-    ' Start:' + idx.start + ' End:' + idx.end +
-    ' rows:' + rows.length);
 
   var newRows = [];
   var skippedDup = 0;
@@ -115,7 +89,6 @@ function importExcelLeaveEntries() {
     }
 
     var empInfo = ctx.empMap[empId] || { bu: '', cat: '', dept: '', name: '' };
-
     var leaveType = idx.leaveType >= 0 ? String(row[idx.leaveType] || '').trim() : '';
     var dbCode = idx.dbLeaveCode >= 0 ? String(row[idx.dbLeaveCode] || '').trim() : '';
 
@@ -130,7 +103,6 @@ function importExcelLeaveEntries() {
     var cat = idx.category >= 0 ? String(row[idx.category] || '').trim() : '';
     var bu = idx.bu >= 0 ? String(row[idx.bu] || '').trim() : '';
     var empName = idx.empName >= 0 ? String(row[idx.empName] || '').trim() : '';
-
     if (!dept) dept = empInfo.dept;
     if (!cat) cat = empInfo.cat;
     if (!bu) bu = empInfo.bu;
@@ -173,10 +145,17 @@ function importExcelLeaveEntries() {
     appendLeaveRows_(leaveSheet, newRows);
   }
 
+  var pipeline = null;
+  if (typeof runLeaveCleanupPipeline === 'function') {
+    try { pipeline = runLeaveCleanupPipeline(); }
+    catch (pe) { pipeline = { success: false, message: pe.message }; }
+  }
+
   var ms = new Date().getTime() - started;
   var msg = 'Excel Leave import: +' + newRows.length + ' new (skipped dup ' +
     skippedDup + ', bad ' + skippedBad + ') from ' + rows.length +
     ' CSV rows in ' + ms + ' ms.';
+  if (pipeline && pipeline.message) msg += ' | ' + pipeline.message;
   Logger.log(msg);
   return {
     success: true,
@@ -184,15 +163,11 @@ function importExcelLeaveEntries() {
     added: newRows.length,
     skippedDup: skippedDup,
     skippedBad: skippedBad,
-    csvRows: rows.length,
+    pipeline: pipeline,
     elapsedMs: ms
   };
 }
 
-/**
- * Load clean Excel Leave Entries.csv (standard CSV).
- * Falls back to unwrapping a legacy broken export envelope if needed.
- */
 function loadExcelLeaveEntriesCsv_() {
   try {
     var folder = DriveApp.getFolderById(LEAVE_CSV_FOLDER_ID);
@@ -207,12 +182,9 @@ function loadExcelLeaveEntriesCsv_() {
     }
 
     var text = file.getBlob().getDataAsString();
-
-    // Normal clean CSV starts with header
     var trimmed = text.replace(/^\uFEFF/, '').trim();
     if (trimmed.indexOf('Leave Code,Emp ID') !== 0 &&
         trimmed.indexOf('Leave Code, Emp ID') !== 0) {
-      // Legacy broken wrapper fallback
       var headerPos = text.indexOf('Leave Code,Emp ID');
       if (headerPos < 0) headerPos = text.indexOf('Leave Code, Emp ID');
       if (headerPos >= 0) {
