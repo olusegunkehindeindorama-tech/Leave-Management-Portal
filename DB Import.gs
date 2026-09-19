@@ -2,8 +2,9 @@
  * ============================================================
  *  LEAVE IMPORT HELPERS + DARWINBOX IMPORT (trigger-friendly)
  * ============================================================
- *  Dedup key (strict): EmpID|yyyy-MM-dd|yyyy-MM-dd
- *  Dates always normalized via parseLeaveDate_ before fingerprinting.
+ *  Dedup key (strict, Leave Code ignored):
+ *      EmpID | yyyy-MM-dd | yyyy-MM-dd
+ *  Dates always normalized (script timezone) before fingerprinting.
  * ============================================================
  */
 
@@ -71,7 +72,7 @@ function importDarwinBoxLeaves_() {
       continue;
     }
 
-    // Strict dedup: Emp ID + normalized Start + normalized End
+    // Leave Code is NOT part of the key — same emp+dates = duplicate
     var fp = fingerprintKey_(empId, startDate, endDate);
     if (ctx.existingKeys[fp]) {
       skippedDup++;
@@ -181,6 +182,7 @@ function loadLeaveImportContext_(leaveSheet) {
   }
 
   var leaveData = leaveSheet.getDataRange().getValues();
+  var leaveDisplay = leaveSheet.getDataRange().getDisplayValues();
   var lHeaders = leaveData.length
     ? leaveData[0].map(function (h) { return String(h).trim(); })
     : defaultLeaveHeaders_();
@@ -200,9 +202,15 @@ function loadLeaveImportContext_(leaveSheet) {
   for (var r = 1; r < leaveData.length; r++) {
     var emp = lEmp >= 0 ? String(leaveData[r][lEmp] || '').trim().toUpperCase() : '';
     if (!emp) continue;
-    // Always normalize dates so 19-Apr-2026 and 19/04/2026 map to the same key
-    var s = lStart >= 0 ? parseLeaveDate_(leaveData[r][lStart]) : null;
-    var en = lEnd >= 0 ? parseLeaveDate_(leaveData[r][lEnd]) : null;
+
+    // Parse raw OR display text so text-formatted dates still match imports
+    var s = lStart >= 0
+      ? (parseLeaveDate_(leaveData[r][lStart]) || parseLeaveDate_(leaveDisplay[r][lStart]))
+      : null;
+    var en = lEnd >= 0
+      ? (parseLeaveDate_(leaveData[r][lEnd]) || parseLeaveDate_(leaveDisplay[r][lEnd]))
+      : null;
+
     if (s && en) {
       existingKeys[fingerprintKey_(emp, s, en)] = true;
     }
@@ -210,7 +218,6 @@ function loadLeaveImportContext_(leaveSheet) {
       var code = String(leaveData[r][lEntry] || '').trim().toUpperCase();
       if (code) {
         existingEntryCodes[code] = true;
-        // Also index base code without suffixes so BP-1023-a matches BP-1023
         var base = code.replace(/-S[12]$/i, '').replace(/-[AB]$/i, '');
         if (base) existingEntryCodes[base] = true;
       }
@@ -247,10 +254,25 @@ function setLeaveCol_(row, headers, name, value) {
   if (i >= 0) row[i] = value;
 }
 
-/** Strict fingerprint: EMPID|yyyy-MM-dd|yyyy-MM-dd */
+/**
+ * Strict fingerprint — Emp ID + dates only (Leave Code ignored).
+ * Uses script timezone so formats match across sheet & CSV.
+ */
 function fingerprintKey_(empId, startDate, endDate) {
   return String(empId).trim().toUpperCase() + '|' +
     formatDateKey(startDate) + '|' + formatDateKey(endDate);
+}
+
+function formatDateKey(dateObj) {
+  if (!dateObj || !(dateObj instanceof Date) || isNaN(dateObj.getTime())) return '';
+  try {
+    return Utilities.formatDate(dateObj, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  } catch (e) {
+    var y = dateObj.getFullYear();
+    var m = ('0' + (dateObj.getMonth() + 1)).slice(-2);
+    var d = ('0' + dateObj.getDate()).slice(-2);
+    return y + '-' + m + '-' + d;
+  }
 }
 
 function findHeader_(headers, names) {
@@ -286,10 +308,6 @@ function loadCsvFromFolder_(folderId, fileName) {
   }
 }
 
-/**
- * Parse: Date, ISO, dd-MMM-yyyy, dd-MMM-yy, dd/MM/yyyy [HH:mm], Excel serial.
- * Always returns midnight local date (no time component).
- */
 function parseLeaveDate_(val) {
   if (val === null || val === undefined || val === '') return null;
   if (val instanceof Date && !isNaN(val.getTime())) {
@@ -309,7 +327,6 @@ function parseLeaveDate_(val) {
   var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
 
-  // 19-Apr-2026 / 19-Apr-26
   var mon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})/);
   if (mon) {
     var mi = months[mon[2].toLowerCase()];
@@ -320,7 +337,6 @@ function parseLeaveDate_(val) {
     }
   }
 
-  // 08/08/2026 00  or  26/05/2026 00:00
   var slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
   if (slash) {
     var day = Number(slash[1]);
