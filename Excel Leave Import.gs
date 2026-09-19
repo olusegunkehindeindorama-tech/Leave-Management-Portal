@@ -5,7 +5,7 @@
  *  Source: "Excel Leave Entries.csv" in folder LEAVE_CSV_FOLDER_ID
  *  Target: tblLeave — append rows not already present
  *
- *  CSV columns (may be wrapped in a broken export envelope):
+ *  CSV columns (clean export):
  *    Leave Code, Emp ID, Emp Name, Department, Category, Leave Type,
  *    Start Date, End Date, Leave Reason, Date Entered, Entered By,
  *    Date Modified, Modified By, BU, DB Remark, Upload Date,
@@ -14,12 +14,10 @@
  *  Mapping → tblLeave:
  *    Leave Code     → Entry Code
  *    DB Leave Code  → Leave Code
- *    Emp ID/Name/Dept/Category/Leave Type/Start/End/Reason/…
- *    Dates may be Excel serial numbers
+ *    Dates: dd-MMM-yy (31-Mar-26), dd/MM/yyyy HH:mm (26/05/2026 00:00)
  *
  *  Dedup: Entry Code (if present) OR EmpID|Start|End
  *  No of Days / Leave Utilized / Entitlement Year left blank
- *  (run calculateLeaveUtilized later).
  * ============================================================
  */
 
@@ -45,7 +43,7 @@ function importExcelLeaveEntries() {
 
   var idx = {
     entryCode: findHeader_(headers, ['Leave Code', 'Entry Code']),
-    dbLeaveCode: findHeader_(headers, ['DB Leave Code', 'Leave Code DB']),
+    dbLeaveCode: findHeader_(headers, ['DB Leave Code']),
     empId: findHeader_(headers, ['Emp ID', 'Employee Id', 'Employee ID']),
     empName: findHeader_(headers, ['Emp Name', 'Employee Name']),
     dept: findHeader_(headers, ['Department', 'Dept']),
@@ -64,17 +62,15 @@ function importExcelLeaveEntries() {
     uploadedBy: findHeader_(headers, ['Uploaded By', 'Upload By'])
   };
 
-  // Note: "Leave Code" in Excel file is Entry Code; DB Leave Code is system code.
-  // If both map to same index because only one "Leave Code" exists, prefer entry.
+  // Ensure DB Leave Code is not confused with Leave Code (Entry Code)
   if (idx.entryCode >= 0 && idx.dbLeaveCode === idx.entryCode) {
-    // Look specifically for DB Leave Code as last column often
+    idx.dbLeaveCode = -1;
     for (var h = 0; h < headers.length; h++) {
       if (String(headers[h]).trim().toLowerCase() === 'db leave code') {
         idx.dbLeaveCode = h;
         break;
       }
     }
-    if (idx.dbLeaveCode === idx.entryCode) idx.dbLeaveCode = -1;
   }
 
   if (idx.empId < 0 || idx.start < 0 || idx.end < 0) {
@@ -83,6 +79,11 @@ function importExcelLeaveEntries() {
       message: 'Excel Leave CSV missing Emp ID / Start / End. Found: ' + headers.join(', ')
     };
   }
+
+  Logger.log('Excel CSV columns mapped — Entry:' + idx.entryCode +
+    ' DBCode:' + idx.dbLeaveCode + ' Emp:' + idx.empId +
+    ' Start:' + idx.start + ' End:' + idx.end +
+    ' rows:' + rows.length);
 
   var newRows = [];
   var skippedDup = 0;
@@ -103,7 +104,6 @@ function importExcelLeaveEntries() {
     var entryCode = idx.entryCode >= 0 ? String(row[idx.entryCode] || '').trim() : '';
     var entryKey = entryCode ? entryCode.toUpperCase() : '';
 
-    // Dedup by Entry Code first, then by emp+dates
     if (entryKey && ctx.existingEntryCodes[entryKey]) {
       skippedDup++;
       continue;
@@ -119,17 +119,9 @@ function importExcelLeaveEntries() {
     var leaveType = idx.leaveType >= 0 ? String(row[idx.leaveType] || '').trim() : '';
     var dbCode = idx.dbLeaveCode >= 0 ? String(row[idx.dbLeaveCode] || '').trim() : '';
 
-    // Enrich from policy if leave type maps
     if (leaveType && ctx.policyMap[leaveType.toLowerCase()]) {
       var pol = ctx.policyMap[leaveType.toLowerCase()];
       if (!dbCode) dbCode = pol.dbCode;
-    } else if (leaveType) {
-      // try DB leave name match
-      var pol2 = ctx.policyMap[leaveType.toLowerCase()];
-      if (pol2) {
-        leaveType = pol2.stdType || leaveType;
-        if (!dbCode) dbCode = pol2.dbCode;
-      }
     }
 
     if (!entryCode) entryCode = 'XL-' + Date.now() + '-' + i;
@@ -156,7 +148,6 @@ function importExcelLeaveEntries() {
     setLeaveCol_(newRow, ctx.lHeaders, 'End Date', endDate);
     setLeaveCol_(newRow, ctx.lHeaders, 'Leave Reason',
       idx.reason >= 0 ? String(row[idx.reason] || '').trim() : '');
-    // No of Days / Leave Utilized / Entitlement Year left blank
     setLeaveCol_(newRow, ctx.lHeaders, 'Date Entered',
       idx.dateEntered >= 0 ? (parseLeaveDate_(row[idx.dateEntered]) || '') : '');
     setLeaveCol_(newRow, ctx.lHeaders, 'Entered By',
@@ -199,8 +190,8 @@ function importExcelLeaveEntries() {
 }
 
 /**
- * Load Excel Leave Entries.csv.
- * Handles a broken export envelope: [null,"Leave Code,...\r\nBP-1,...",null,null,null]
+ * Load clean Excel Leave Entries.csv (standard CSV).
+ * Falls back to unwrapping a legacy broken export envelope if needed.
  */
 function loadExcelLeaveEntriesCsv_() {
   try {
@@ -217,17 +208,20 @@ function loadExcelLeaveEntriesCsv_() {
 
     var text = file.getBlob().getDataAsString();
 
-    // Detect embedded CSV inside broken array/JSON-like wrapper
-    var headerPos = text.indexOf('Leave Code,Emp ID');
-    if (headerPos < 0) headerPos = text.indexOf('Leave Code, Emp ID');
-    if (headerPos >= 0) {
-      var body = text.substring(headerPos);
-      // Unescape literal \r\n sequences from the wrapper
-      body = body.replace(/\\r\\n/g, '\n').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      // Trim trailing array junk: ",null,null]" etc.
-      body = body.replace(/"?\s*,?\s*null\s*,?\s*null\s*,?\s*null\s*\]?\s*$/i, '');
-      body = body.replace(/"\s*$/, '');
-      text = body;
+    // Normal clean CSV starts with header
+    var trimmed = text.replace(/^\uFEFF/, '').trim();
+    if (trimmed.indexOf('Leave Code,Emp ID') !== 0 &&
+        trimmed.indexOf('Leave Code, Emp ID') !== 0) {
+      // Legacy broken wrapper fallback
+      var headerPos = text.indexOf('Leave Code,Emp ID');
+      if (headerPos < 0) headerPos = text.indexOf('Leave Code, Emp ID');
+      if (headerPos >= 0) {
+        var body = text.substring(headerPos);
+        body = body.replace(/\\r\\n/g, '\n').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        body = body.replace(/"?\s*,?\s*null\s*,?\s*null\s*,?\s*null\s*\]?\s*$/i, '');
+        body = body.replace(/"\s*$/, '');
+        text = body;
+      }
     }
 
     var parsed = Utilities.parseCsv(text);
@@ -235,15 +229,13 @@ function loadExcelLeaveEntriesCsv_() {
       return { success: false, message: 'Excel Leave CSV empty or unreadable.' };
     }
 
-    // Drop trailing garbage rows (e.g. ",null,null")
     var cleaned = [];
     cleaned.push(parsed[0].map(function (h) { return String(h || '').trim(); }));
     for (var i = 1; i < parsed.length; i++) {
       var r = parsed[i];
       if (!r || !r.length) continue;
       var first = String(r[0] || '').trim();
-      if (!first || first.toLowerCase() === 'null' || first.indexOf('null') === 0) continue;
-      // Must look like an entry code or emp-related row
+      if (!first || first.toLowerCase() === 'null') continue;
       cleaned.push(r);
     }
 

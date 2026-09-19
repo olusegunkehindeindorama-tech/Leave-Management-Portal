@@ -63,7 +63,6 @@ function importDarwinBoxLeaves_() {
     var row = rows[i];
     if (!row || !row.length) continue;
 
-    // Approved only
     if (idx.status >= 0 && String(row[idx.status] || '').trim() !== 'Approved') {
       skippedStatus++;
       continue;
@@ -105,7 +104,6 @@ function importDarwinBoxLeaves_() {
     setLeaveCol_(newRow, ctx.lHeaders, 'End Date', endDate);
     setLeaveCol_(newRow, ctx.lHeaders, 'Leave Reason',
       idx.comment >= 0 ? String(row[idx.comment] || '').trim() : '');
-    // No of Days / Leave Utilized / Entitlement Year left blank intentionally
     setLeaveCol_(newRow, ctx.lHeaders, 'Date Entered',
       idx.applied >= 0 ? (parseLeaveDate_(row[idx.applied]) || new Date()) : new Date());
     setLeaveCol_(newRow, ctx.lHeaders, 'Entered By', 'Darwinbox');
@@ -150,7 +148,6 @@ function loadLeaveImportContext_(leaveSheet) {
     return { success: false, message: 'tblEmployee sheet missing.' };
   }
 
-  // Policies
   var policyMap = {};
   if (policySheet) {
     var pData = policySheet.getDataRange().getValues();
@@ -170,7 +167,6 @@ function loadLeaveImportContext_(leaveSheet) {
     }
   }
 
-  // Employees
   var empMap = {};
   var eData = empSheet.getDataRange().getValues();
   if (eData.length > 1) {
@@ -192,7 +188,6 @@ function loadLeaveImportContext_(leaveSheet) {
     }
   }
 
-  // Existing leave keys
   var leaveData = leaveSheet.getDataRange().getValues();
   var lHeaders = leaveData.length
     ? leaveData[0].map(function (h) { return String(h).trim(); })
@@ -291,7 +286,7 @@ function loadCsvFromFolder_(folderId, fileName) {
 }
 
 /**
- * Parse many date shapes: Date, ISO, dd-MMM-yyyy, dd/MM/yyyy, Excel serial.
+ * Parse: Date, ISO, dd-MMM-yyyy, dd-MMM-yy, dd/MM/yyyy [HH:mm], Excel serial.
  */
 function parseLeaveDate_(val) {
   if (val === null || val === undefined || val === '') return null;
@@ -299,44 +294,55 @@ function parseLeaveDate_(val) {
     return new Date(val.getFullYear(), val.getMonth(), val.getDate());
   }
   // Excel serial number
-  if (typeof val === 'number' || (/^\d+(\.\d+)?$/.test(String(val).trim()) && Number(val) > 20000 && Number(val) < 80000)) {
+  if (typeof val === 'number' ||
+      (/^\d+(\.\d+)?$/.test(String(val).trim()) && Number(val) > 20000 && Number(val) < 80000)) {
     return excelSerialToDate_(Number(val));
   }
+
   var s = String(val).trim();
+  // Strip trailing time if present (handled separately only for date part)
+  var months = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+    jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+  };
+
   // ISO yyyy-MM-dd
   var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
-  // dd-MMM-yyyy (Darwinbox)
-  var mon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})/);
+
+  // dd-MMM-yyyy or dd-MMM-yy  (e.g. 31-Mar-26, 18-Sep-2026)
+  var mon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})/);
   if (mon) {
-    var months = {
-      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
-    };
     var mi = months[mon[2].toLowerCase()];
-    if (mi !== undefined) return new Date(Number(mon[3]), mi, Number(mon[1]));
+    if (mi !== undefined) {
+      var y = Number(mon[3]);
+      if (y < 100) y = y >= 70 ? 1900 + y : 2000 + y; // 26 → 2026, 99 → 1999
+      return new Date(y, mi, Number(mon[1]));
+    }
   }
-  // dd/MM/yyyy or MM/dd/yyyy — prefer dd/MM when day > 12
+
+  // dd/MM/yyyy or dd/MM/yyyy HH:mm  (NG locale) e.g. 26/05/2026 00:00
   var slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (slash) {
-    var a = Number(slash[1]), b = Number(slash[2]), y = Number(slash[3]);
-    if (a > 12) return new Date(y, b - 1, a); // dd/MM
-    return new Date(y, b - 1, a); // treat as dd/MM (NG locale)
+    var day = Number(slash[1]);
+    var month = Number(slash[2]);
+    var year = Number(slash[3]);
+    // If first part > 12 it must be day; otherwise assume dd/MM (Nigeria)
+    return new Date(year, month - 1, day);
   }
+
   var d = new Date(s);
   if (!isNaN(d.getTime())) return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   return null;
 }
 
 function excelSerialToDate_(serial) {
-  // Excel epoch 1899-12-30 (Sheets-compatible)
   var epoch = new Date(1899, 11, 30);
   var whole = Math.floor(serial);
   var d = new Date(epoch.getTime() + whole * 86400000);
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-/** Append rows only — does not rewrite the whole sheet. */
 function appendLeaveRows_(sheet, rows) {
   if (!rows || !rows.length) return;
   var startRow = Math.max(sheet.getLastRow() + 1, 2);
