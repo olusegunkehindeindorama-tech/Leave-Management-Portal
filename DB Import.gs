@@ -3,8 +3,8 @@
  *  LEAVE IMPORT HELPERS + DARWINBOX IMPORT (trigger-friendly)
  * ============================================================
  *  Dedup on import: EmpID | yyyy-MM-dd | yyyy-MM-dd
- *  After append: runLeaveCleanupPipeline()
- *    (overlap → exact dedupe → utilization recalc)
+ *  After append: scheduleLeaveCleanupPipeline_() (~6 minutes)
+ *  Pipeline is NOT run inline (too long for import execution).
  * ============================================================
  */
 
@@ -116,24 +116,24 @@ function importDarwinBoxLeaves_() {
     appendLeaveRows_(leaveSheet, newRows);
   }
 
-  // REQUIRED: overlap → dedupe → recalc after every import
-  var pipeline = null;
-  if (typeof runLeaveCleanupPipeline === 'function') {
+  // Pipeline is heavy — schedule ~6 min later (not inline)
+  var schedule = null;
+  if (typeof scheduleLeaveCleanupPipeline_ === 'function') {
     try {
-      pipeline = runLeaveCleanupPipeline();
-    } catch (pe) {
-      pipeline = { success: false, message: pe.message };
-      Logger.log('Pipeline error after Darwinbox import: ' + pe.message);
+      schedule = scheduleLeaveCleanupPipeline_();
+    } catch (se) {
+      schedule = { success: false, message: se.message };
+      Logger.log('Could not schedule cleanup pipeline: ' + se.message);
     }
   } else {
-    Logger.log('WARNING: runLeaveCleanupPipeline not found — load Leave Cleanup.gs');
+    Logger.log('WARNING: scheduleLeaveCleanupPipeline_ not found — load Leave Cleanup.gs');
   }
 
   var ms = new Date().getTime() - started;
   var msg = 'Darwinbox import: +' + newRows.length + ' new (skipped dup ' +
     skippedDup + ', not-approved ' + skippedStatus + ', bad ' + skippedBad +
     ') in ' + ms + ' ms.';
-  if (pipeline && pipeline.message) msg += ' | ' + pipeline.message;
+  if (schedule && schedule.message) msg += ' | ' + schedule.message;
   Logger.log(msg);
   return {
     success: true,
@@ -141,7 +141,7 @@ function importDarwinBoxLeaves_() {
     added: newRows.length,
     skippedDup: skippedDup,
     skippedStatus: skippedStatus,
-    pipeline: pipeline,
+    schedule: schedule,
     elapsedMs: ms
   };
 }

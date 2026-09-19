@@ -1,6 +1,7 @@
 /**
  * EXCEL LEAVE ENTRIES IMPORT — on-click only
- * After append: runLeaveCleanupPipeline (overlap → dedupe → recalc)
+ * After append: scheduleLeaveCleanupPipeline_() (~6 min)
+ * Pipeline is NOT run inline.
  */
 var EXCEL_LEAVE_CSV_NAME = 'Excel Leave Entries.csv';
 
@@ -145,17 +146,24 @@ function importExcelLeaveEntries() {
     appendLeaveRows_(leaveSheet, newRows);
   }
 
-  var pipeline = null;
-  if (typeof runLeaveCleanupPipeline === 'function') {
-    try { pipeline = runLeaveCleanupPipeline(); }
-    catch (pe) { pipeline = { success: false, message: pe.message }; }
+  // Pipeline is heavy — schedule ~6 min later (not inline)
+  var schedule = null;
+  if (typeof scheduleLeaveCleanupPipeline_ === 'function') {
+    try {
+      schedule = scheduleLeaveCleanupPipeline_();
+    } catch (se) {
+      schedule = { success: false, message: se.message };
+      Logger.log('Could not schedule cleanup pipeline: ' + se.message);
+    }
+  } else {
+    Logger.log('WARNING: scheduleLeaveCleanupPipeline_ not found — load Leave Cleanup.gs');
   }
 
   var ms = new Date().getTime() - started;
   var msg = 'Excel Leave import: +' + newRows.length + ' new (skipped dup ' +
     skippedDup + ', bad ' + skippedBad + ') from ' + rows.length +
     ' CSV rows in ' + ms + ' ms.';
-  if (pipeline && pipeline.message) msg += ' | ' + pipeline.message;
+  if (schedule && schedule.message) msg += ' | ' + schedule.message;
   Logger.log(msg);
   return {
     success: true,
@@ -163,7 +171,7 @@ function importExcelLeaveEntries() {
     added: newRows.length,
     skippedDup: skippedDup,
     skippedBad: skippedBad,
-    pipeline: pipeline,
+    schedule: schedule,
     elapsedMs: ms
   };
 }
