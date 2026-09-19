@@ -2,9 +2,9 @@
  * ============================================================
  *  LEAVE IMPORT HELPERS + DARWINBOX IMPORT (trigger-friendly)
  * ============================================================
- *  Dedup key (strict, Leave Code ignored):
- *      EmpID | yyyy-MM-dd | yyyy-MM-dd
- *  Dates always normalized (script timezone) before fingerprinting.
+ *  Dedup on import: EmpID | yyyy-MM-dd | yyyy-MM-dd
+ *  After append: runLeaveCleanupPipeline()
+ *    (overlap → exact dedupe → utilization recalc)
  * ============================================================
  */
 
@@ -72,7 +72,6 @@ function importDarwinBoxLeaves_() {
       continue;
     }
 
-    // Leave Code is NOT part of the key — same emp+dates = duplicate
     var fp = fingerprintKey_(empId, startDate, endDate);
     if (ctx.existingKeys[fp]) {
       skippedDup++;
@@ -117,10 +116,24 @@ function importDarwinBoxLeaves_() {
     appendLeaveRows_(leaveSheet, newRows);
   }
 
+  // REQUIRED: overlap → dedupe → recalc after every import
+  var pipeline = null;
+  if (typeof runLeaveCleanupPipeline === 'function') {
+    try {
+      pipeline = runLeaveCleanupPipeline();
+    } catch (pe) {
+      pipeline = { success: false, message: pe.message };
+      Logger.log('Pipeline error after Darwinbox import: ' + pe.message);
+    }
+  } else {
+    Logger.log('WARNING: runLeaveCleanupPipeline not found — load Leave Cleanup.gs');
+  }
+
   var ms = new Date().getTime() - started;
   var msg = 'Darwinbox import: +' + newRows.length + ' new (skipped dup ' +
     skippedDup + ', not-approved ' + skippedStatus + ', bad ' + skippedBad +
     ') in ' + ms + ' ms.';
+  if (pipeline && pipeline.message) msg += ' | ' + pipeline.message;
   Logger.log(msg);
   return {
     success: true,
@@ -128,6 +141,7 @@ function importDarwinBoxLeaves_() {
     added: newRows.length,
     skippedDup: skippedDup,
     skippedStatus: skippedStatus,
+    pipeline: pipeline,
     elapsedMs: ms
   };
 }
@@ -203,7 +217,6 @@ function loadLeaveImportContext_(leaveSheet) {
     var emp = lEmp >= 0 ? String(leaveData[r][lEmp] || '').trim().toUpperCase() : '';
     if (!emp) continue;
 
-    // Parse raw OR display text so text-formatted dates still match imports
     var s = lStart >= 0
       ? (parseLeaveDate_(leaveData[r][lStart]) || parseLeaveDate_(leaveDisplay[r][lStart]))
       : null;
@@ -218,7 +231,7 @@ function loadLeaveImportContext_(leaveSheet) {
       var code = String(leaveData[r][lEntry] || '').trim().toUpperCase();
       if (code) {
         existingEntryCodes[code] = true;
-        var base = code.replace(/-S[12]$/i, '').replace(/-[AB]$/i, '');
+        var base = code.replace(/-S[12]$/i, '').replace(/-[A-Z]$/i, '');
         if (base) existingEntryCodes[base] = true;
       }
     }
@@ -254,10 +267,6 @@ function setLeaveCol_(row, headers, name, value) {
   if (i >= 0) row[i] = value;
 }
 
-/**
- * Strict fingerprint — Emp ID + dates only (Leave Code ignored).
- * Uses script timezone so formats match across sheet & CSV.
- */
 function fingerprintKey_(empId, startDate, endDate) {
   return String(empId).trim().toUpperCase() + '|' +
     formatDateKey(startDate) + '|' + formatDateKey(endDate);

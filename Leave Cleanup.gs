@@ -1,23 +1,15 @@
 /**
  * ============================================================
- *  LEAVE CLEANUP PIPELINE
+ *  LEAVE CLEANUP PIPELINE (SAFE — in-place only)
  * ============================================================
- *  Rules:
- *  - An employee cannot be on two leaves the same calendar day
- *    (Leave Type ignored — Emp ID only).
- *  - Exact duplicate key: EmpID | yyyy-MM-dd | yyyy-MM-dd
- *  - Overlap: keep the shorter range (if equal length → first row),
- *    split the longer into non-overlapping side pieces, drop the
- *    middle that is covered by the shorter. Entry Code gets -a/-b.
- *  - -S1/-S2 are reserved for carry-forward splits (recalc).
+ *  NEVER clearContents / rewrite the whole sheet.
+ *  ONLY: update cells, delete full duplicate/overlap rows, append splits.
  *
- *  Standalone (no import):
- *    runLeaveCleanupPipeline()
- *      → resolve overlaps → exact dedupe → calculateLeaveUtilized
+ *  Emp ID only for overlaps (leave type ignored).
+ *  Exact key: EmpID | yyyy-MM-dd | yyyy-MM-dd
  *
- *  After import:
- *    import already skips exact emp|start|end
- *    then call runLeaveCleanupPipeline() same as above
+ *  runLeaveCleanupPipeline()
+ *    → resolve overlaps (in-place) → exact dedupe (in-place) → recalc
  * ============================================================
  */
 
@@ -60,19 +52,22 @@ function leaveFingerprint_(empId, startDate, endDate) {
     leaveDateKey_(startDate) + '|' + leaveDateKey_(endDate);
 }
 
-function stripEntryCodeSuffix_(code) {
+function stripSSuffix_(code) {
   var c = String(code || '').trim();
-  if (!c) return c;
+  while (/-S[12]$/i.test(c)) c = c.replace(/-S[12]$/i, '');
+  return c;
+}
+
+function stripAllSuffixes_(code) {
+  var c = String(code || '').trim();
   var prev;
   do {
     prev = c;
     c = c.replace(/-S[12]$/i, '');
-    c = c.replace(/-[a-z]$/i, ''); // -a, -b, -c …
+    c = c.replace(/-[a-z]$/i, '');
   } while (c !== prev);
   return c;
 }
-
-function dayMs_() { return 86400000; }
 
 function addDays_(dateObj, n) {
   var d = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
@@ -81,7 +76,7 @@ function addDays_(dateObj, n) {
 }
 
 function inclusiveDays_(start, end) {
-  return Math.round((end.getTime() - start.getTime()) / dayMs_()) + 1;
+  return Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
 }
 
 function rangesOverlap_(s1, e1, s2, e2) {
@@ -89,23 +84,22 @@ function rangesOverlap_(s1, e1, s2, e2) {
 }
 
 // ---------------------------------------------------------------------------
-// Public entry points
+// Public API
 // ---------------------------------------------------------------------------
 
-/** Full pipeline: overlaps → exact dedupe → utilization recalc */
 function runLeaveCleanupPipeline() {
   var started = new Date().getTime();
-  var overlap = resolveOverlappingLeaves_();
-  var dedupe = exactDedupeLeaveRecords_();
+  var overlap = resolveOverlappingLeavesInPlace_();
+  var dedupe = exactDedupeLeaveRecordsInPlace_();
   var recalc = null;
   if (typeof calculateLeaveUtilized === 'function') {
     try { recalc = calculateLeaveUtilized(); }
     catch (e) { recalc = { success: false, message: e.message }; }
   }
   var ms = new Date().getTime() - started;
-  var msg = 'Pipeline done in ' + ms + ' ms. | Overlap: ' + (overlap.message || '') +
-    ' | Dedupe: ' + (dedupe.message || '') +
-    (recalc && recalc.message ? ' | Recalc: ' + recalc.message : '');
+  var msg = 'Pipeline ' + ms + ' ms. | ' + (overlap.message || '') +
+    ' | ' + (dedupe.message || '') +
+    (recalc && recalc.message ? ' | ' + recalc.message : '');
   Logger.log(msg);
   return {
     success: true,
@@ -117,254 +111,204 @@ function runLeaveCleanupPipeline() {
   };
 }
 
-/** Aliases */
-function cleanupDuplicateLeaveRecords() {
-  return runLeaveCleanupPipeline();
-}
-function cleanupLeaveDuplicates() {
-  return runLeaveCleanupPipeline();
-}
-/** Dedupe + overlap only (no recalc) */
+function cleanupDuplicateLeaveRecords() { return runLeaveCleanupPipeline(); }
+function cleanupLeaveDuplicates() { return runLeaveCleanupPipeline(); }
 function cleanupDuplicateLeaveRecordsOnly() {
-  var overlap = resolveOverlappingLeaves_();
-  var dedupe = exactDedupeLeaveRecords_();
+  var overlap = resolveOverlappingLeavesInPlace_();
+  var dedupe = exactDedupeLeaveRecordsInPlace_();
   return {
     success: true,
-    message: 'Overlap + dedupe only. ' + (overlap.message || '') + ' | ' + (dedupe.message || ''),
+    message: (overlap.message || '') + ' | ' + (dedupe.message || ''),
     overlap: overlap,
     dedupe: dedupe
   };
 }
 
 // ---------------------------------------------------------------------------
-// Step 1 — Overlap resolve (Emp ID only)
+// Overlap resolve — IN PLACE (no sheet rewrite)
 // ---------------------------------------------------------------------------
 
 /**
- * For each employee, while any two leave ranges overlap:
- *   keep the shorter (if equal length → earlier sheet row),
- *   replace the longer with 0–2 side segments (non-overlapping),
- *   tag new segments Entry Code with -a / -b.
- * Runs iteratively until stable. Also collapses identical ranges.
+ * Strategy:
+ *  - Load all parseable leaves into memory
+ *  - Iteratively find one overlapping pair per emp
+ *  - Keep shorter (or first if equal length)
+ *  - DELETE the longer row entirely
+ *  - APPEND 0–2 side segments (with -a/-b on Entry Code)
+ *  - Never blank Start/End on existing rows
  */
-function resolveOverlappingLeaves_() {
+function resolveOverlappingLeavesInPlace_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblLeave');
   if (!sheet) return { success: false, message: 'tblLeave missing.' };
 
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
-  if (lastRow < 2) return { success: true, message: 'No rows.', splits: 0, deleted: 0 };
+  if (lastRow < 2) return { success: true, message: 'Overlap: no rows.', splits: 0, deleted: 0 };
 
-  var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-  var display = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
-  var headers = data[0].map(function (h) { return String(h).trim(); });
-
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) {
+    return String(h).trim();
+  });
   var empIdx = headers.indexOf('Emp ID');
   var startIdx = headers.indexOf('Start Date');
   var endIdx = headers.indexOf('End Date');
   var entryIdx = headers.indexOf('Entry Code');
   if (empIdx < 0 || startIdx < 0 || endIdx < 0) {
-    return { success: false, message: 'Missing Emp ID / Start / End columns.' };
+    return { success: false, message: 'Missing Emp ID / Start / End.' };
   }
 
-  // Working set of leave objects (mutable)
-  var leaves = [];
-  for (var i = 1; i < data.length; i++) {
-    var empId = String(data[i][empIdx] || '').trim().toUpperCase();
-    var s = leaveParseDate_(data[i][startIdx]) || leaveParseDate_(display[i][startIdx]);
-    var e = leaveParseDate_(data[i][endIdx]) || leaveParseDate_(display[i][endIdx]);
-    if (!empId || !s || !e || e < s) continue;
-    leaves.push({
-      values: data[i].slice(),
-      empId: empId,
-      start: s,
-      end: e,
-      origRow: i + 1,
-      alive: true
-    });
-  }
+  var totalSplits = 0;
+  var totalDeleted = 0;
+  var maxOuter = 30;
 
-  var splits = 0;
-  var deleted = 0;
-  var maxPasses = 50;
-  var pass = 0;
-  var changed = true;
+  for (var outer = 0; outer < maxOuter; outer++) {
+    // Re-read after each mutation so row numbers stay valid
+    lastRow = sheet.getLastRow();
+    if (lastRow < 2) break;
 
-  while (changed && pass < maxPasses) {
-    changed = false;
-    pass++;
+    var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+    var display = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
 
-    // Index alive leaves by emp
-    var byEmp = {};
-    for (var li = 0; li < leaves.length; li++) {
-      if (!leaves[li].alive) continue;
-      var id = leaves[li].empId;
-      if (!byEmp[id]) byEmp[id] = [];
-      byEmp[id].push(li);
+    var leaves = []; // { row, empId, start, end, values }
+    for (var i = 1; i < data.length; i++) {
+      var empId = String(data[i][empIdx] || '').trim().toUpperCase();
+      var s = leaveParseDate_(data[i][startIdx]) || leaveParseDate_(display[i][startIdx]);
+      var e = leaveParseDate_(data[i][endIdx]) || leaveParseDate_(display[i][endIdx]);
+      if (!empId || !s || !e || e < s) continue;
+      leaves.push({
+        row: i + 1,
+        empId: empId,
+        start: s,
+        end: e,
+        values: data[i].slice()
+      });
     }
 
+    // Group by emp
+    var byEmp = {};
+    for (var li = 0; li < leaves.length; li++) {
+      var id = leaves[li].empId;
+      if (!byEmp[id]) byEmp[id] = [];
+      byEmp[id].push(leaves[li]);
+    }
+
+    var fixedOne = false;
+
     Object.keys(byEmp).forEach(function (empId) {
-      if (changed) return; // one fix per outer pass for stability
-      var idxs = byEmp[empId];
-      // Sort by start, then origRow
-      idxs.sort(function (a, b) {
-        var da = leaves[a].start.getTime() - leaves[b].start.getTime();
-        if (da !== 0) return da;
-        return leaves[a].origRow - leaves[b].origRow;
+      if (fixedOne) return;
+      var list = byEmp[empId];
+      list.sort(function (a, b) {
+        var d = a.start.getTime() - b.start.getTime();
+        if (d !== 0) return d;
+        return a.row - b.row;
       });
 
-      for (var x = 0; x < idxs.length && !changed; x++) {
-        for (var y = x + 1; y < idxs.length && !changed; y++) {
-          var A = leaves[idxs[x]];
-          var B = leaves[idxs[y]];
-          if (!A.alive || !B.alive) continue;
+      for (var x = 0; x < list.length && !fixedOne; x++) {
+        for (var y = x + 1; y < list.length && !fixedOne; y++) {
+          var A = list[x];
+          var B = list[y];
           if (!rangesOverlap_(A.start, A.end, B.start, B.end)) continue;
 
-          // Identical range → keep first (lower origRow), drop other
+          // Identical → delete later row only
           if (A.start.getTime() === B.start.getTime() && A.end.getTime() === B.end.getTime()) {
-            var drop = A.origRow <= B.origRow ? B : A;
-            drop.alive = false;
-            deleted++;
-            changed = true;
+            var dropRow = A.row < B.row ? B.row : A.row;
+            sheet.deleteRow(dropRow);
+            totalDeleted++;
+            fixedOne = true;
             break;
           }
 
           var lenA = inclusiveDays_(A.start, A.end);
           var lenB = inclusiveDays_(B.start, B.end);
           var small, large;
-          if (lenA < lenB) {
-            small = A; large = B;
-          } else if (lenB < lenA) {
-            small = B; large = A;
-          } else {
-            // Equal length → keep earlier row intact
-            if (A.origRow <= B.origRow) { small = A; large = B; }
+          if (lenA < lenB) { small = A; large = B; }
+          else if (lenB < lenA) { small = B; large = A; }
+          else {
+            if (A.row <= B.row) { small = A; large = B; }
             else { small = B; large = A; }
           }
 
-          // Build side segments of large outside small
+          // Side segments of large outside small
           var segments = [];
           if (large.start.getTime() < small.start.getTime()) {
-            segments.push({
-              start: large.start,
-              end: addDays_(small.start, -1)
-            });
+            var leftEnd = addDays_(small.start, -1);
+            if (leftEnd.getTime() >= large.start.getTime()) {
+              segments.push({ start: large.start, end: leftEnd });
+            }
           }
           if (large.end.getTime() > small.end.getTime()) {
-            segments.push({
-              start: addDays_(small.end, 1),
-              end: large.end
-            });
+            var rightStart = addDays_(small.end, 1);
+            if (rightStart.getTime() <= large.end.getTime()) {
+              segments.push({ start: rightStart, end: large.end });
+            }
           }
 
-          // Kill large; add side pieces as new leaves
-          large.alive = false;
-          deleted++;
-
+          // Build append rows from large's values BEFORE deleting
           var baseCode = entryIdx >= 0
-            ? stripEntryCodeSuffix_(String(large.values[entryIdx] || 'LV'))
+            ? stripAllSuffixes_(String(large.values[entryIdx] || 'LV'))
             : 'LV';
 
+          var appendRows = [];
           for (var si = 0; si < segments.length; si++) {
             var seg = segments[si];
-            if (seg.end.getTime() < seg.start.getTime()) continue;
             var newVals = large.values.slice();
+            // Pad to lastCol
+            while (newVals.length < lastCol) newVals.push('');
             newVals[startIdx] = seg.start;
             newVals[endIdx] = seg.end;
             if (entryIdx >= 0) {
-              newVals[entryIdx] = baseCode + '-' + String.fromCharCode(97 + si); // -a, -b
+              newVals[entryIdx] = baseCode + '-' + String.fromCharCode(97 + si);
             }
-            // Clear utilization fields — recalc will fill
             var utilIdx = headers.indexOf('Leave Utilized');
             var daysIdx = headers.indexOf('No of Days');
             var yearIdx = headers.indexOf('Entitlement Year');
             if (utilIdx >= 0) newVals[utilIdx] = '';
             if (daysIdx >= 0) newVals[daysIdx] = '';
             if (yearIdx >= 0) newVals[yearIdx] = '';
-
-            leaves.push({
-              values: newVals,
-              empId: large.empId,
-              start: seg.start,
-              end: seg.end,
-              origRow: 999999, // new
-              alive: true
-            });
-            splits++;
+            appendRows.push(newVals);
           }
-          changed = true;
+
+          // Delete the longer row (full row — never clear date cells only)
+          sheet.deleteRow(large.row);
+          totalDeleted++;
+
+          // Append side segments
+          if (appendRows.length) {
+            if (typeof appendLeaveRows_ === 'function') {
+              appendLeaveRows_(sheet, appendRows);
+            } else {
+              appendRows.forEach(function (r) { sheet.appendRow(r); });
+            }
+            totalSplits += appendRows.length;
+          }
+
+          SpreadsheetApp.flush();
+          fixedOne = true;
         }
       }
     });
+
+    if (!fixedOne) break; // stable
   }
 
-  // Rebuild sheet from alive leaves (preserve header)
-  var outRows = [];
-  for (var k = 0; k < leaves.length; k++) {
-    if (!leaves[k].alive) continue;
-    // Ensure date cells are Date objects
-    leaves[k].values[startIdx] = leaves[k].start;
-    leaves[k].values[endIdx] = leaves[k].end;
-    if (entryIdx >= 0) {
-      // Strip any leftover -S1/-S2; keep -a/-b we just assigned
-      var code = String(leaves[k].values[entryIdx] || '');
-      // Only strip S suffixes, preserve single-letter -a/-b
-      code = code.replace(/-S[12]$/i, '');
-      leaves[k].values[entryIdx] = code;
-    }
-    outRows.push(leaves[k].values);
-  }
-
-  // Sort for readability: Emp ID, Start
-  outRows.sort(function (a, b) {
-    var ae = String(a[empIdx] || '').toUpperCase();
-    var be = String(b[empIdx] || '').toUpperCase();
-    if (ae !== be) return ae < be ? -1 : 1;
-    return new Date(a[startIdx]) - new Date(b[startIdx]);
-  });
-
-  // Write back without clearContents of whole workbook — replace data region
-  var out = [headers].concat(outRows);
-  // Clear only used data range then write
-  if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, lastCol).clearContent();
-  }
-  var need = out.length - sheet.getMaxRows();
-  if (need > 0) sheet.insertRowsAfter(sheet.getMaxRows(), need + 10);
-
-  var CHUNK = 4000;
-  for (var c = 0; c < out.length; c += CHUNK) {
-    var part = out.slice(c, c + CHUNK);
-    sheet.getRange(c + 1, 1, part.length, headers.length).setValues(part);
-  }
-  SpreadsheetApp.flush();
-
-  try {
-    if (outRows.length > 0) {
-      sheet.getRange(2, startIdx + 1, outRows.length, 1).setNumberFormat('dd-mmm-yyyy');
-      sheet.getRange(2, endIdx + 1, outRows.length, 1).setNumberFormat('dd-mmm-yyyy');
-    }
-  } catch (e) {}
-
-  var msg = 'Overlap resolve: ' + splits + ' segment(s) created, ' +
-    deleted + ' overlapping row(s) removed, ' + outRows.length + ' row(s) remain.';
+  var msg = 'Overlap: deleted ' + totalDeleted + ' row(s), appended ' +
+    totalSplits + ' segment(s).';
   Logger.log(msg);
-  return { success: true, message: msg, splits: splits, deleted: deleted, remaining: outRows.length };
+  return { success: true, message: msg, deleted: totalDeleted, splits: totalSplits };
 }
 
 // ---------------------------------------------------------------------------
-// Step 2 — Exact emp|start|end dedupe (keep first)
+// Exact dedupe — IN PLACE (keep first, delete later full rows)
 // ---------------------------------------------------------------------------
 
-function exactDedupeLeaveRecords_() {
+function exactDedupeLeaveRecordsInPlace_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblLeave');
   if (!sheet) return { success: false, message: 'tblLeave missing.' };
 
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
-  if (lastRow < 2) return { success: true, message: 'No rows.', removed: 0 };
+  if (lastRow < 2) return { success: true, message: 'Dedupe: no rows.', removed: 0 };
 
   var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
   var display = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
@@ -378,9 +322,9 @@ function exactDedupeLeaveRecords_() {
     return { success: false, message: 'Missing columns.' };
   }
 
-  var seen = {}; // fp → first sheet row
+  var seen = {};
   var rowsToDelete = [];
-  var rowsToUpdate = [];
+  var entryUpdates = []; // { row, code } — strip -S1/-S2 only, never touch dates unless both parse
 
   for (var i = 1; i < data.length; i++) {
     var empId = String(data[i][empIdx] || '').trim().toUpperCase();
@@ -397,25 +341,27 @@ function exactDedupeLeaveRecords_() {
     }
     seen[fp] = sheetRow;
 
-    var upd = { sheetRow: sheetRow };
-    var ch = false;
+    // Strip -S1/-S2 from entry code on kept row (preserve -a/-b)
     if (entryIdx >= 0) {
       var raw = String(data[i][entryIdx] || '');
-      // Strip only -S1/-S2 here; keep -a/-b from overlap splits
-      var clean = raw.replace(/-S[12]$/i, '');
-      // Also strip pure -S1/-S2 if repeated
-      while (/-S[12]$/i.test(clean)) clean = clean.replace(/-S[12]$/i, '');
-      if (clean !== raw) { upd.entryCode = clean; ch = true; }
+      var clean = stripSSuffix_(raw);
+      if (clean !== raw) {
+        entryUpdates.push({ row: sheetRow, code: clean });
+      }
     }
-    if (!(data[i][startIdx] instanceof Date)) { upd.start = s; ch = true; }
-    if (!(data[i][endIdx] instanceof Date)) { upd.end = e; ch = true; }
-    if (ch) rowsToUpdate.push(upd);
+
+    // Normalize date cells ONLY when current value is not already a Date
+    // and we successfully parsed — write the Date object (never blank)
+    if (!(data[i][startIdx] instanceof Date) && s) {
+      sheet.getRange(sheetRow, startIdx + 1).setValue(s);
+    }
+    if (!(data[i][endIdx] instanceof Date) && e) {
+      sheet.getRange(sheetRow, endIdx + 1).setValue(e);
+    }
   }
 
-  rowsToUpdate.forEach(function (u) {
-    if (u.entryCode !== undefined) sheet.getRange(u.sheetRow, entryIdx + 1).setValue(u.entryCode);
-    if (u.start !== undefined) sheet.getRange(u.sheetRow, startIdx + 1).setValue(u.start);
-    if (u.end !== undefined) sheet.getRange(u.sheetRow, endIdx + 1).setValue(u.end);
+  entryUpdates.forEach(function (u) {
+    sheet.getRange(u.row, entryIdx + 1).setValue(u.code);
   });
 
   rowsToDelete.sort(function (a, b) { return b - a; });
@@ -434,7 +380,7 @@ function exactDedupeLeaveRecords_() {
   }
   SpreadsheetApp.flush();
 
-  var msg = 'Exact dedupe: removed ' + deleted + ' duplicate row(s) (kept first).';
+  var msg = 'Dedupe: removed ' + deleted + ' full duplicate row(s).';
   Logger.log(msg);
   return { success: true, message: msg, removed: deleted };
 }
