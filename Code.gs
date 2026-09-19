@@ -1,5 +1,16 @@
 /** SERVE THE WEB APP */
 function doGet(e) {
+  // Prefer embedded full UI if IndexHtmlLoader + parts are present
+  try {
+    if (typeof getIndexHtml_ === 'function') {
+      return HtmlService.createHtmlOutput(getIndexHtml_())
+        .setTitle('Leave Management')
+        .setFaviconUrl('https://ssl.gstatic.com/docs/spreadsheets/favicon3.ico')
+        .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    }
+  } catch (err) {
+    Logger.log('getIndexHtml_ failed: ' + err.message);
+  }
   return HtmlService.createTemplateFromFile('Index')
       .evaluate()
       .setTitle('Leave Management')
@@ -233,6 +244,19 @@ function buildBalanceReportCsv(buFilter, deptFilter) {
 
 function getLeaveRecordsFiltered(filters) {
   filters = filters || {};
+  var fromD = filters.fromDate ? new Date(filters.fromDate) : null;
+  var toD = filters.toDate ? new Date(filters.toDate) : null;
+  if (fromD && toD && typeof getLeaveRecordsInRange_ === 'function') {
+    var ranged = getLeaveRecordsInRange_(fromD, toD);
+    var rows = ranged.rows || [];
+    return { rows: rows.map(function(r) {
+      return {
+        entryCode: r.entryCode, empId: r.empId, empName: r.empName, department: r.department,
+        bu: '', leaveType: r.leaveType, startDate: r.startDate, endDate: r.endDate,
+        utilized: r.leaveUtilized, dbRemark: '', enteredBy: r.enteredBy
+      };
+    }), total: rows.length };
+  }
   var data = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('tblLeave').getDataRange().getValues();
   var headers = data.shift().map(function(h) { return String(h).trim(); });
   var idx = {
@@ -241,8 +265,6 @@ function getLeaveRecordsFiltered(filters) {
     start: headers.indexOf('Start Date'), end: headers.indexOf('End Date'), util: headers.indexOf('Leave Utilized'),
     remark: headers.indexOf('DB Remark'), enteredBy: headers.indexOf('Entered By')
   };
-  var fromD = filters.fromDate ? new Date(filters.fromDate) : null;
-  var toD = filters.toDate ? new Date(filters.toDate) : null;
   var limit = Number(filters.limit) || 500;
   var rows = [];
   for (var i = 0; i < data.length && rows.length < limit; i++) {
@@ -254,8 +276,9 @@ function getLeaveRecordsFiltered(filters) {
     if (filters.leaveType && String(r[idx.type]).trim() !== String(filters.leaveType).trim()) continue;
     if (filters.dbRemark && String(r[idx.remark]).toLowerCase().indexOf(String(filters.dbRemark).toLowerCase()) === -1) continue;
     var sDate = new Date(r[idx.start]);
-    if (fromD && !isNaN(fromD) && (isNaN(sDate) || sDate < fromD)) continue;
-    if (toD && !isNaN(toD) && (isNaN(sDate) || sDate > toD)) continue;
+    var eDate = new Date(r[idx.end]);
+    if (fromD && !isNaN(fromD) && !isNaN(eDate) && eDate < fromD) continue;
+    if (toD && !isNaN(toD) && !isNaN(sDate) && sDate > toD) continue;
     rows.push({ entryCode: r[idx.entry], empId: empId, empName: r[idx.name], department: r[idx.dept], bu: r[idx.bu],
       leaveType: r[idx.type], startDate: r[idx.start], endDate: r[idx.end], utilized: r[idx.util],
       dbRemark: r[idx.remark], enteredBy: r[idx.enteredBy] });
@@ -275,7 +298,6 @@ function buildLeaveRecordsCsv(filters) {
   return arrayToCsv_(out);
 }
 
-/** Shift calendar + leave overlays — uses loadShiftMapForEmp_ (wide or long). */
 function getShiftCalendar(empId, year, month) {
   year = Number(year) || new Date().getFullYear();
   month = Number(month) || (new Date().getMonth() + 1);
@@ -316,10 +338,6 @@ function getShiftCalendar(empId, year, month) {
   return { year: year, month: month, empId: target, days: days };
 }
 
-/**
- * Update one shift cell. Supports WIDE tblShift (Emp ID | date columns).
- * Falls back to legacy LONG append if sheet is still long-format.
- */
 function updateShiftCode(empId, dateStr, shiftCode, userSession) {
   var shiftSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('tblShift');
   if (!shiftSheet) return { success: false, message: 'tblShift not found.' };
@@ -337,20 +355,17 @@ function updateShiftCode(empId, dateStr, shiftCode, userSession) {
     (String(data[0][0] || '').toLowerCase().indexOf('emp') === 0 && h1.toLowerCase() !== 'date');
 
   if (isWide) {
-    // Find date column
     var col = -1;
     for (var c = 1; c < data[0].length; c++) {
       var hs = String(data[0][c] || '').trim().substring(0, 10);
       if (hs === targetKey) { col = c + 1; break; }
     }
-    // Find emp row
     var row = -1;
     for (var i = 1; i < data.length; i++) {
       if (String(data[i][0] || '').trim().toUpperCase() === target) { row = i + 1; break; }
     }
 
     if (col < 0 && code) {
-      // Add new date column at end
       col = data[0].length + 1;
       if (col > shiftSheet.getMaxColumns()) shiftSheet.insertColumnsAfter(shiftSheet.getMaxColumns(), 1);
       shiftSheet.getRange(1, col).setValue(targetKey);
@@ -367,7 +382,6 @@ function updateShiftCode(empId, dateStr, shiftCode, userSession) {
     return { success: true, message: 'Nothing to update' };
   }
 
-  // Legacy LONG
   var found = -1;
   for (var j = 1; j < data.length; j++) {
     if (String(data[j][0]).trim().toUpperCase() !== target) continue;
