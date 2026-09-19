@@ -1,9 +1,10 @@
 /**
  * Fast leave balance for ONE employee (UI path).
  * Applies Deduct from: Casual + Examination usage reduce Annual balance.
- * Uses Cache.gs helpers when available.
+ * Carry-forward from StartingBal only while today is on/before the
+ * Carry Forward Deadline on the matched Annual Leave policy.
  *
- * Also exports batchComputeEmployeeBalances_ for EmployeeSync.gs (in-memory batch).
+ * Also exports batchComputeEmployeeBalances_ for EmployeeSync.gs.
  */
 function apiGetEmployeeBalance(empId) {
   empId = String(empId || '').trim().toUpperCase();
@@ -28,7 +29,6 @@ function apiGetEmployeeBalance(empId) {
   var dept = String(emp['Department'] || '').trim();
   var dojRaw = emp['Date of Join'];
   var doj = (dojRaw instanceof Date) ? dojRaw : parseDDMMYYYY(String(dojRaw || ''));
-  var catInitials = mapCategoryToInitials(catFull);
 
   var carryGross = 0;
   try {
@@ -89,17 +89,6 @@ function apiGetEmployeeBalance(empId) {
   };
 }
 
-/**
- * BATCH: mutates each employee row object in `employees` by writing leave-column balances.
- * Designed for EmployeeSync.gs — zero sheet reads; all inputs preloaded.
- *
- * @param {Object[]} employees  row objects with profile fields (Business Unit, Emp ID, …)
- * @param {Object[]} policies   Sys_LeavePolicies rows as objects
- * @param {Object} leaveUsageByEmp  empId -> leaveType -> year -> utilized
- * @param {Object} startingBalMap   empId -> prev-year carry number
- * @param {Date} today
- * @param {Object} leaveColMap  { 'Annual': 'Annual Leave', ... } sheetCol -> leave type name
- */
 function batchComputeEmployeeBalances_(employees, policies, leaveUsageByEmp, startingBalMap, today, leaveColMap) {
   leaveColMap = leaveColMap || {
     'Annual': 'Annual Leave',
@@ -134,23 +123,21 @@ function batchComputeEmployeeBalances_(employees, policies, leaveUsageByEmp, sta
       today
     );
 
-    // Write balances into leave-type columns on the employee row
     Object.keys(leaveColMap).forEach(function (col) {
       var leaveType = leaveColMap[col];
       var bal = core.balances[leaveType];
-      if (bal === undefined || bal === null) {
-        emp[col] = '';
-      } else if (bal === 'Unlimited') {
-        emp[col] = 'Unlimited';
-      } else {
-        emp[col] = Number(bal);
-      }
+      if (bal === undefined || bal === null) emp[col] = '';
+      else if (bal === 'Unlimited') emp[col] = 'Unlimited';
+      else emp[col] = Number(bal);
     });
   }
 }
 
 /**
  * Shared pure calculation (no sheet I/O).
+ * Prev-year balance is available only while today <= Carry Forward Deadline.
+ * New leave applications with start date AFTER the deadline must not consume it
+ * (enforced at submit via canUsePrevYearBalance_ / split logic).
  */
 function computeBalancesForEmployeeCore_(profile, policies, usage, today) {
   today = today || new Date();
@@ -173,7 +160,6 @@ function computeBalancesForEmployeeCore_(profile, policies, usage, today) {
 
     var scoreBU = checkMatch(bu.toUpperCase(), String(pol['Business Unit'] || '').trim().toUpperCase(), 100);
     var scoreCat = checkMatch(catInitials, String(pol['Category'] || '').trim(), 10);
-    // Also try full category text against policy category
     if (scoreCat === -1) {
       scoreCat = checkMatch(catFull, String(pol['Category'] || '').trim(), 10);
     }
@@ -189,13 +175,21 @@ function computeBalancesForEmployeeCore_(profile, policies, usage, today) {
     var show = String(pol['Balance Page Show'] || '').trim().toLowerCase();
     var showYes = (show === 'yes' || show === 'y' || show === 'true');
     var deductFrom = String(pol['Deduct from'] || '').trim();
-    var deadlineRaw = String(pol['Carry Forward Deadline'] || '').trim();
+
+    var deadlineRaw = pol['Carry Forward Deadline'];
     var deadline = null;
-    if (deadlineRaw && deadlineRaw.toLowerCase() !== 'no') {
-      deadline = parseDDMMYYYY(deadlineRaw);
-      if (!isNaN(deadline.getTime())) deadline.setFullYear(currentYear);
-      else deadline = null;
+    if (deadlineRaw !== null && deadlineRaw !== undefined &&
+        String(deadlineRaw).trim() !== '' && String(deadlineRaw).trim().toLowerCase() !== 'no') {
+      if (deadlineRaw instanceof Date && !isNaN(deadlineRaw.getTime())) {
+        deadline = new Date(currentYear, deadlineRaw.getMonth(), deadlineRaw.getDate());
+      } else {
+        var tmp = parseDDMMYYYY(String(deadlineRaw));
+        if (!isNaN(tmp.getTime())) deadline = new Date(currentYear, tmp.getMonth(), tmp.getDate());
+      }
     }
+
+    var multFlag = String(pol['Multiplier'] || 'No').trim();
+    multFlag = /^y/i.test(multFlag) ? 'Yes' : 'No';
 
     if (!typeMeta[lType] || totalScore > typeMeta[lType].score) {
       typeMeta[lType] = {
@@ -204,7 +198,8 @@ function computeBalancesForEmployeeCore_(profile, policies, usage, today) {
         isUnlimited: isUnlimited,
         show: showYes,
         deductFrom: deductFrom,
-        deadline: deadline
+        deadline: deadline,
+        multFlag: multFlag
       };
     }
   }
@@ -245,7 +240,8 @@ function computeBalancesForEmployeeCore_(profile, policies, usage, today) {
       total = 'Unlimited';
       currAvail = 'Unlimited';
     } else {
-      if (meta.deadline && today > meta.deadline) {
+      // CF available only while today is on/before deadline
+      if (meta.deadline && today.getTime() > meta.deadline.getTime()) {
         carryExpired = true;
         prevAvail = 0;
       } else if (t === 'Annual Leave') {
@@ -272,7 +268,9 @@ function computeBalancesForEmployeeCore_(profile, policies, usage, today) {
       thisYearBalance: currAvail,
       currentBalance: total,
       carryExpired: carryExpired,
+      carryDeadline: meta.deadline ? formatDateKey(meta.deadline) : null,
       deductFrom: meta.deductFrom,
+      multFlag: meta.multFlag,
       show: meta.show
     };
   });
