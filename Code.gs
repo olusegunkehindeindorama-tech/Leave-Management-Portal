@@ -1,6 +1,5 @@
 /** SERVE THE WEB APP */
 function doGet(e) {
-  // Prefer embedded full UI if IndexHtmlLoader + parts are present
   try {
     if (typeof getIndexHtml_ === 'function') {
       return HtmlService.createHtmlOutput(getIndexHtml_())
@@ -162,8 +161,12 @@ function submitLeaveRequest(formData, userSession) {
     }
   }
 
-  var sDate = new Date(formData.startDate);
-  var eDate = new Date(formData.endDate);
+  // Date-only: local Y/M/D — no UTC midnight from new Date('yyyy-MM-dd')
+  var sDate = parseDateOnly_(formData.startDate);
+  var eDate = parseDateOnly_(formData.endDate);
+  if (!sDate || !eDate) {
+    return { success: false, message: 'Invalid start or end date.' };
+  }
   var noOfDays = Math.round((eDate - sDate) / 86400000) + 1;
   var utilized = 0;
   try { utilized = calculateLeaveUtilize(formData.empId, sDate, eDate, formData.leaveType); }
@@ -183,10 +186,21 @@ function submitLeaveRequest(formData, userSession) {
     'Upload Date': '', 'Uploaded By': ''
   };
   tblLeave.appendRow(headers.map(function(h) { return rowObj[h] !== undefined ? rowObj[h] : ''; }));
+
+  // Force date format on start/end columns for the new row
+  try {
+    var last = tblLeave.getLastRow();
+    var si = headers.indexOf('Start Date');
+    var ei = headers.indexOf('End Date');
+    if (si >= 0) tblLeave.getRange(last, si + 1).setNumberFormat('dd-mmm-yyyy');
+    if (ei >= 0) tblLeave.getRange(last, ei + 1).setNumberFormat('dd-mmm-yyyy');
+  } catch (fe) {}
+
   invalidateEmpCaches_(formData.empId);
   return { success: true, message: 'Leave recorded as ' + newEntryCode + ' (utilized ' + utilized + ' days)' };
 }
 
+/** History for UI — start/end as yyyy-MM-dd strings (timezone-safe). */
 function getEmployeeLeaveHistory(empId) {
   var rows = loadLeaveRowsForEmp_(empId);
   var history = rows.map(function(r) {
@@ -195,8 +209,8 @@ function getEmployeeLeaveHistory(empId) {
       empId: r['Emp ID'],
       empName: r['Emp Name'],
       type: r['Leave Type'],
-      startDate: r['Start Date'],
-      endDate: r['End Date'],
+      startDate: formatDateOnly_(r['Start Date']),
+      endDate: formatDateOnly_(r['End Date']),
       noOfDays: r['No of Days'],
       entitlementYear: r['Entitlement Year'],
       utilized: r['Leave Utilized'],
@@ -204,7 +218,9 @@ function getEmployeeLeaveHistory(empId) {
       status: r['DB Remark']
     };
   });
-  history.sort(function(a, b) { return new Date(b.startDate) - new Date(a.startDate); });
+  history.sort(function(a, b) {
+    return String(b.startDate || '').localeCompare(String(a.startDate || ''));
+  });
   return history;
 }
 
@@ -219,8 +235,10 @@ function updateLeaveRecord(updateData, userSession) {
   }
   if (target < 0) return { success: false, message: 'Record not found.' };
 
-  var sDate = new Date(updateData.startDate);
-  var eDate = new Date(updateData.endDate);
+  var sDate = parseDateOnly_(updateData.startDate);
+  var eDate = parseDateOnly_(updateData.endDate);
+  if (!sDate || !eDate) return { success: false, message: 'Invalid dates.' };
+
   var noOfDays = Math.round((eDate - sDate) / 86400000) + 1;
   var type = String(data[target - 1][headers.indexOf('Leave Type')] || '');
   var utilized = 0;
@@ -232,7 +250,13 @@ function updateLeaveRecord(updateData, userSession) {
    { col: 'Date Modified', val: new Date() }, { col: 'Modified By', val: userSession.name }
   ].forEach(function(u) {
     var c = headers.indexOf(u.col);
-    if (c > -1) tblLeave.getRange(target, c + 1).setValue(u.val);
+    if (c > -1) {
+      var cell = tblLeave.getRange(target, c + 1);
+      cell.setValue(u.val);
+      if (u.col === 'Start Date' || u.col === 'End Date') {
+        try { cell.setNumberFormat('dd-mmm-yyyy'); } catch (fe) {}
+      }
+    }
   });
   invalidateEmpCaches_(updateData.empId);
   return { success: true, message: 'Record ' + updateData.entryCode + ' updated.' };
@@ -244,16 +268,19 @@ function buildBalanceReportCsv(buFilter, deptFilter) {
 
 function getLeaveRecordsFiltered(filters) {
   filters = filters || {};
-  var fromD = filters.fromDate ? new Date(filters.fromDate) : null;
-  var toD = filters.toDate ? new Date(filters.toDate) : null;
+  var fromD = filters.fromDate ? parseDateOnly_(filters.fromDate) : null;
+  var toD = filters.toDate ? parseDateOnly_(filters.toDate) : null;
   if (fromD && toD && typeof getLeaveRecordsInRange_ === 'function') {
     var ranged = getLeaveRecordsInRange_(fromD, toD);
     var rows = ranged.rows || [];
     return { rows: rows.map(function(r) {
       return {
         entryCode: r.entryCode, empId: r.empId, empName: r.empName, department: r.department,
-        bu: '', leaveType: r.leaveType, startDate: r.startDate, endDate: r.endDate,
-        utilized: r.leaveUtilized, dbRemark: '', enteredBy: r.enteredBy
+        bu: '', leaveType: r.leaveType,
+        startDate: formatDateOnly_(r.startDate),
+        endDate: formatDateOnly_(r.endDate),
+        utilized: r.leaveUtilized, dbRemark: '', enteredBy: r.enteredBy,
+        dateEntered: r.dateEntered
       };
     }), total: rows.length };
   }
@@ -275,13 +302,18 @@ function getLeaveRecordsFiltered(filters) {
     if (filters.dept && String(r[idx.dept]).toUpperCase() !== String(filters.dept).toUpperCase()) continue;
     if (filters.leaveType && String(r[idx.type]).trim() !== String(filters.leaveType).trim()) continue;
     if (filters.dbRemark && String(r[idx.remark]).toLowerCase().indexOf(String(filters.dbRemark).toLowerCase()) === -1) continue;
-    var sDate = new Date(r[idx.start]);
-    var eDate = new Date(r[idx.end]);
-    if (fromD && !isNaN(fromD) && !isNaN(eDate) && eDate < fromD) continue;
-    if (toD && !isNaN(toD) && !isNaN(sDate) && sDate > toD) continue;
-    rows.push({ entryCode: r[idx.entry], empId: empId, empName: r[idx.name], department: r[idx.dept], bu: r[idx.bu],
-      leaveType: r[idx.type], startDate: r[idx.start], endDate: r[idx.end], utilized: r[idx.util],
-      dbRemark: r[idx.remark], enteredBy: r[idx.enteredBy] });
+    var sDate = idx.start >= 0 ? parseDateOnly_(r[idx.start]) : null;
+    var eDate = idx.end >= 0 ? parseDateOnly_(r[idx.end]) : null;
+    if (fromD && eDate && eDate < fromD) continue;
+    if (toD && sDate && sDate > toD) continue;
+    rows.push({
+      entryCode: r[idx.entry], empId: empId, empName: r[idx.name], department: r[idx.dept], bu: r[idx.bu],
+      leaveType: r[idx.type],
+      startDate: formatDateOnly_(sDate || r[idx.start]),
+      endDate: formatDateOnly_(eDate || r[idx.end]),
+      utilized: r[idx.util],
+      dbRemark: r[idx.remark], enteredBy: r[idx.enteredBy]
+    });
   }
   return { rows: rows, total: rows.length };
 }
@@ -291,8 +323,7 @@ function buildLeaveRecordsCsv(filters) {
   var out = [['Entry Code', 'Emp ID', 'Emp Name', 'Department', 'BU', 'Leave Type', 'Start Date', 'End Date', 'Leave Utilized', 'DB Remark', 'Entered By']];
   result.rows.forEach(function(r) {
     out.push([r.entryCode, r.empId, r.empName, r.department, r.bu, r.leaveType,
-      r.startDate instanceof Date ? Utilities.formatDate(r.startDate, Session.getScriptTimeZone(), 'yyyy-MM-dd') : r.startDate,
-      r.endDate instanceof Date ? Utilities.formatDate(r.endDate, Session.getScriptTimeZone(), 'yyyy-MM-dd') : r.endDate,
+      formatDateOnly_(r.startDate), formatDateOnly_(r.endDate),
       r.utilized, r.dbRemark, r.enteredBy]);
   });
   return arrayToCsv_(out);
@@ -307,9 +338,9 @@ function getShiftCalendar(empId, year, month) {
 
   var leaveByDate = {};
   leaveRows.forEach(function(r) {
-    var s = new Date(r['Start Date']);
-    var e = new Date(r['End Date']);
-    if (isNaN(s) || isNaN(e)) return;
+    var s = parseDateOnly_(r['Start Date']);
+    var e = parseDateOnly_(r['End Date']);
+    if (!s || !e) return;
     var cur = new Date(s.getFullYear(), s.getMonth(), s.getDate());
     var end = new Date(e.getFullYear(), e.getMonth(), e.getDate());
     while (cur <= end) {
@@ -346,7 +377,7 @@ function updateShiftCode(empId, dateStr, shiftCode, userSession) {
   if (data.length < 1) return { success: false, message: 'tblShift empty.' };
 
   var target = String(empId).trim().toUpperCase();
-  var d = new Date(dateStr);
+  var d = parseDateOnly_(dateStr) || new Date(dateStr);
   var targetKey = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
   var code = String(shiftCode || '').trim().toUpperCase();
 
