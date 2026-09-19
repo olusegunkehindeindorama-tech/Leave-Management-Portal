@@ -1,19 +1,9 @@
 /**
  * Leave records export by overlapping date range.
- *
- * Filter: leave.EndDate >= rangeStart AND leave.StartDate <= rangeEnd
- *
- * Columns:
- *   Entry Code, Emp ID, Emp Name, Department, Category, Leave Type,
- *   Start Date, End Date, Leave Reason, No of Days (calendar),
- *   Leave Utilized (work days), Entitlement Year, Date Entered, Entered By
+ * Start/End returned as yyyy-MM-dd strings (no timezone shift in UI).
+ * Date Entered kept as datetime.
  */
 
-/**
- * @param {string|Date} startDate - range start (inclusive)
- * @param {string|Date} endDate   - range end (inclusive)
- * @returns {{success:boolean, rows:Array, csv:string, message:string}}
- */
 function exportLeaveRecordsByDateRange(startDate, endDate) {
   var rangeStart = parseExportDate_(startDate);
   var rangeEnd = parseExportDate_(endDate);
@@ -38,16 +28,10 @@ function exportLeaveRecordsByDateRange(startDate, endDate) {
   };
 }
 
-/**
- * Same data for UI table (no download dialog).
- */
 function getLeaveRecordsByDateRange(startDate, endDate) {
   return exportLeaveRecordsByDateRange(startDate, endDate);
 }
 
-/**
- * Build CSV string only (for download button).
- */
 function buildLeaveRecordsRangeCsv(startDate, endDate) {
   var r = exportLeaveRecordsByDateRange(startDate, endDate);
   if (!r.success) return '';
@@ -85,7 +69,9 @@ function getLeaveRecordsInRange_(rangeStart, rangeEnd) {
     by: headers.indexOf('Entered By')
   };
 
-  var parseD = typeof parseLeaveDate_ === 'function' ? parseLeaveDate_ : parseExportDate_;
+  var parseD = (typeof parseDateOnly_ === 'function')
+    ? parseDateOnly_
+    : (typeof parseLeaveDate_ === 'function' ? parseLeaveDate_ : parseExportDate_);
 
   var rows = [];
   var table = [LEAVE_EXPORT_HEADERS_];
@@ -99,9 +85,19 @@ function getLeaveRecordsInRange_(rangeStart, rangeEnd) {
       : null;
     if (!s || !e) continue;
 
-    // Overlap: leave.end >= rangeStart AND leave.start <= rangeEnd
     if (e.getTime() < rangeStart.getTime()) continue;
     if (s.getTime() > rangeEnd.getTime()) continue;
+
+    // Return start/end as strings so the browser never applies UTC conversion
+    var startStr = (typeof formatDateOnly_ === 'function')
+      ? formatDateOnly_(s) : formatExportDate_(s);
+    var endStr = (typeof formatDateOnly_ === 'function')
+      ? formatDateOnly_(e) : formatExportDate_(e);
+
+    var enteredVal = idx.entered >= 0 ? data[i][idx.entered] : '';
+    var enteredStr = (typeof formatDateTime_ === 'function' && enteredVal instanceof Date)
+      ? formatDateTime_(enteredVal)
+      : (enteredVal instanceof Date ? formatExportDate_(enteredVal) : enteredVal);
 
     var obj = {
       entryCode: idx.entry >= 0 ? data[i][idx.entry] : '',
@@ -110,13 +106,13 @@ function getLeaveRecordsInRange_(rangeStart, rangeEnd) {
       department: idx.dept >= 0 ? data[i][idx.dept] : '',
       category: idx.cat >= 0 ? data[i][idx.cat] : '',
       leaveType: idx.type >= 0 ? data[i][idx.type] : '',
-      startDate: s,
-      endDate: e,
+      startDate: startStr,
+      endDate: endStr,
       leaveReason: idx.reason >= 0 ? data[i][idx.reason] : '',
       noOfDays: idx.days >= 0 ? data[i][idx.days] : '',
       leaveUtilized: idx.util >= 0 ? data[i][idx.util] : '',
       entitlementYear: idx.year >= 0 ? data[i][idx.year] : '',
-      dateEntered: idx.entered >= 0 ? data[i][idx.entered] : '',
+      dateEntered: enteredStr,
       enteredBy: idx.by >= 0 ? data[i][idx.by] : ''
     };
     rows.push(obj);
@@ -127,19 +123,20 @@ function getLeaveRecordsInRange_(rangeStart, rangeEnd) {
       obj.department,
       obj.category,
       obj.leaveType,
-      formatExportDate_(obj.startDate),
-      formatExportDate_(obj.endDate),
+      startStr,
+      endStr,
       obj.leaveReason,
       obj.noOfDays,
       obj.leaveUtilized,
       obj.entitlementYear,
-      obj.dateEntered instanceof Date ? formatExportDate_(obj.dateEntered) : obj.dateEntered,
+      enteredStr,
       obj.enteredBy
     ]);
   }
 
-  // Newest start first
-  rows.sort(function (a, b) { return b.startDate.getTime() - a.startDate.getTime(); });
+  rows.sort(function (a, b) {
+    return String(b.startDate || '').localeCompare(String(a.startDate || ''));
+  });
 
   return { rows: rows, table: table };
 }
@@ -151,13 +148,17 @@ var LEAVE_EXPORT_HEADERS_ = [
 ];
 
 function parseExportDate_(val) {
+  if (typeof parseDateOnly_ === 'function') {
+    var p = parseDateOnly_(val);
+    if (p) return p;
+  }
   if (val === null || val === undefined || val === '') return null;
   if (val instanceof Date && !isNaN(val.getTime())) {
     return new Date(val.getFullYear(), val.getMonth(), val.getDate());
   }
   if (typeof parseLeaveDate_ === 'function') {
-    var p = parseLeaveDate_(val);
-    if (p) return p;
+    var q = parseLeaveDate_(val);
+    if (q) return q;
   }
   var s = String(val).trim();
   var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -168,6 +169,10 @@ function parseExportDate_(val) {
 }
 
 function formatExportDate_(d) {
+  if (typeof formatDateOnly_ === 'function') {
+    var f = formatDateOnly_(d);
+    if (f) return f;
+  }
   if (!(d instanceof Date) || isNaN(d.getTime())) return '';
   try {
     return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
@@ -178,7 +183,6 @@ function formatExportDate_(d) {
   }
 }
 
-/** Warm caches used by Leave Entry UI */
 function preloadLeaveEntryData() {
   try {
     if (typeof loadEmployeeMapCached_ === 'function') loadEmployeeMapCached_();
