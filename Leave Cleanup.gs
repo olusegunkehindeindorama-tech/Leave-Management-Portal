@@ -4,11 +4,12 @@
  * ============================================================
  *  Dedup key (strict, leave-code ignored):
  *      EmpID | yyyy-MM-dd | yyyy-MM-dd
- *  Dates compared via script timezone so 09-Jun-2026 as text/Date/serial
- *  all map to the same key.
  *
- *  NEVER clears the sheet. NEVER drops rows that cannot form a key.
- *  Deletes only true duplicate sheet rows (bottom-up).
+ *  Keep rule: FIRST occurrence in the sheet (lowest row number).
+ *  All later duplicates are deleted — no BP/DB preference.
+ *
+ *  Entry Code: strip -S1 / -S2 / -a / -b suffixes to base code.
+ *  (Recalc later may re-apply -S1/-S2 only where CF split is needed.)
  *
  *  Run:
  *    cleanupDuplicateLeaveRecordsOnly()  — dedupe only
@@ -16,7 +17,6 @@
  * ============================================================
  */
 
-/** Timezone-safe yyyy-MM-dd (script TZ). */
 function leaveDateKey_(d) {
   if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
   try {
@@ -29,12 +29,10 @@ function leaveDateKey_(d) {
   }
 }
 
-/** Parse any cell value → Date at local calendar day, or null. */
 function leaveParseDate_(val) {
   if (typeof parseLeaveDate_ === 'function') {
     return parseLeaveDate_(val);
   }
-  // Minimal fallback if DB Import not loaded
   if (val instanceof Date && !isNaN(val.getTime())) {
     return new Date(val.getFullYear(), val.getMonth(), val.getDate());
   }
@@ -61,6 +59,11 @@ function leaveFingerprint_(empId, startDate, endDate) {
     leaveDateKey_(startDate) + '|' + leaveDateKey_(endDate);
 }
 
+/**
+ * Strip -S1, -S2, -a, -b (and repeats) from Entry Code.
+ * BP-11287-a-S1 → BP-11287
+ * BP-11073-S2   → BP-11073
+ */
 function stripEntryCodeSuffix_(code) {
   var c = String(code || '').trim();
   if (!c) return c;
@@ -71,33 +74,6 @@ function stripEntryCodeSuffix_(code) {
     c = c.replace(/-[ab]$/i, '');
   } while (c !== prev);
   return c;
-}
-
-function leaveRowQualityScore_(row, headers) {
-  var score = 0;
-  function col(name) {
-    var i = headers.indexOf(name);
-    return i >= 0 ? row[i] : '';
-  }
-  var entry = String(col('Entry Code') || '');
-  var leaveCode = String(col('Leave Code') || '').trim();
-  var name = String(col('Emp Name') || '').trim();
-  var util = col('Leave Utilized');
-  var days = col('No of Days');
-  var reason = String(col('Leave Reason') || '').trim();
-  var enteredBy = String(col('Entered By') || '').trim();
-
-  if (leaveCode && leaveCode.toUpperCase() !== 'NA') score += 10;
-  if (name) score += 5;
-  if (util !== '' && util !== null && util !== undefined) score += 3;
-  if (days !== '' && days !== null && days !== undefined) score += 2;
-  if (reason) score += 1;
-  if (entry && entry === stripEntryCodeSuffix_(entry)) score += 4;
-  // Prefer BP- human codes over auto DB- codes when both exist for same dates
-  if (/^BP-/i.test(entry)) score += 6;
-  if (/^DB-\d+/i.test(entry)) score -= 2;
-  if (enteredBy && enteredBy.toLowerCase() !== 'darwinbox') score += 1;
-  return score;
 }
 
 /**
@@ -117,7 +93,6 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
     return { success: true, message: 'No leave rows to clean.', removed: 0 };
   }
 
-  // getValues + getDisplayValues so we can parse either real dates or text
   var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
   var display = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
   var headers = data[0].map(function (h) { return String(h).trim(); });
@@ -131,14 +106,12 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
     return { success: false, message: 'tblLeave missing Emp ID / Start Date / End Date.' };
   }
 
-  // Build groups: leave-code is intentionally ignored
-  var groups = {}; // fp → [{ sheetRow, dataIdx, score, startNorm, endNorm }]
+  // Group by emp|start|end — leave code ignored
+  var groups = {}; // fp → [{ sheetRow, dataIdx, startNorm, endNorm }]
   var ungrouped = 0;
-  var sampleKeys = [];
 
   for (var i = 1; i < data.length; i++) {
     var empId = String(data[i][empIdx] || '').trim().toUpperCase();
-    // Prefer parsing raw value; fall back to display text (handles text-formatted dates)
     var s = leaveParseDate_(data[i][startIdx]) || leaveParseDate_(display[i][startIdx]);
     var e = leaveParseDate_(data[i][endIdx]) || leaveParseDate_(display[i][endIdx]);
 
@@ -152,13 +125,9 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
     groups[fp].push({
       sheetRow: i + 1,
       dataIdx: i,
-      score: leaveRowQualityScore_(data[i], headers),
       startNorm: s,
       endNorm: e
     });
-    if (sampleKeys.length < 5 && groups[fp].length > 1) {
-      sampleKeys.push(fp + ' x' + groups[fp].length);
-    }
   }
 
   var rowsToDelete = [];
@@ -167,15 +136,15 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
 
   Object.keys(groups).forEach(function (fp) {
     var list = groups[fp];
-    list.sort(function (a, b) {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.sheetRow - b.sheetRow;
-    });
 
+    // FIRST occurrence only (lowest sheet row) — no BP/DB preference
+    list.sort(function (a, b) { return a.sheetRow - b.sheetRow; });
     var keep = list[0];
+
     var upd = { sheetRow: keep.sheetRow };
     var changed = false;
 
+    // Always strip -S1/-S2/-a/-b from Entry Code on the kept row
     if (entryIdx >= 0) {
       var raw = String(data[keep.dataIdx][entryIdx] || '');
       var clean = stripEntryCodeSuffix_(raw);
@@ -184,7 +153,8 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
         changed = true;
       }
     }
-    // Always write normalized Date so format is consistent in the sheet
+
+    // Normalize dates to real Date values + consistent display later
     upd.start = keep.startNorm;
     upd.end = keep.endNorm;
     changed = true;
@@ -198,7 +168,32 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
     }
   });
 
-  // Apply updates before deletes (row numbers still original)
+  // Also strip -S1/-S2 on rows that were never in a parseable group? 
+  // Cover ALL data rows for entry-code cleanup (including unique ones already handled above).
+  // Unique non-dup rows already in rowsToUpdate. Rows that couldn't parse dates:
+  if (entryIdx >= 0) {
+    for (var r = 1; r < data.length; r++) {
+      var empCheck = String(data[r][empIdx] || '').trim();
+      if (!empCheck) continue;
+      var rawCode = String(data[r][entryIdx] || '');
+      var cleanCode = stripEntryCodeSuffix_(rawCode);
+      if (cleanCode === rawCode) continue;
+      // Skip if already queued for this sheet row
+      var already = false;
+      for (var u = 0; u < rowsToUpdate.length; u++) {
+        if (rowsToUpdate[u].sheetRow === r + 1) {
+          rowsToUpdate[u].entryCode = cleanCode;
+          already = true;
+          break;
+        }
+      }
+      if (!already) {
+        rowsToUpdate.push({ sheetRow: r + 1, entryCode: cleanCode });
+      }
+    }
+  }
+
+  // Apply updates before deletes
   rowsToUpdate.forEach(function (u) {
     if (u.entryCode !== undefined && entryIdx >= 0) {
       sheet.getRange(u.sheetRow, entryIdx + 1).setValue(u.entryCode);
@@ -211,7 +206,7 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
     }
   });
 
-  // Delete duplicates bottom-up in contiguous blocks
+  // Delete later duplicates bottom-up
   rowsToDelete.sort(function (a, b) { return b - a; });
   var deleted = 0;
   var di = 0;
@@ -229,7 +224,6 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
 
   SpreadsheetApp.flush();
 
-  // Uniform display format for date columns
   try {
     var newLast = sheet.getLastRow();
     if (newLast >= 2) {
@@ -251,9 +245,8 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
 
   var ms = new Date().getTime() - started;
   var msg = 'Cleanup in ' + ms + ' ms: ' + dupGroups + ' duplicate group(s), removed ' +
-    deleted + ' row(s), normalized ' + rowsToUpdate.length + ' kept row(s). ' +
-    ungrouped + ' row(s) skipped (no Emp ID or unparseable dates — kept).';
-  if (sampleKeys.length) msg += ' Sample dups: ' + sampleKeys.join('; ') + '.';
+    deleted + ' later row(s) (kept first occurrence each). Stripped -S1/-S2 from Entry Codes. ' +
+    ungrouped + ' row(s) skipped (no key — kept).';
   if (recalcResult && recalcResult.message) msg += ' | Recalc: ' + recalcResult.message;
 
   Logger.log(msg);
@@ -264,7 +257,6 @@ function cleanupDuplicateLeaveRecords(optSkipRecalc) {
     dupGroups: dupGroups,
     updated: rowsToUpdate.length,
     ungroupedKept: ungrouped,
-    sampleDupKeys: sampleKeys,
     recalc: recalcResult,
     elapsedMs: ms
   };
@@ -274,7 +266,6 @@ function cleanupLeaveDuplicates() {
   return cleanupDuplicateLeaveRecords(false);
 }
 
-/** Dedupe only — no split/recalc. Run this first and verify FRT7351. */
 function cleanupDuplicateLeaveRecordsOnly() {
   return cleanupDuplicateLeaveRecords(true);
 }
