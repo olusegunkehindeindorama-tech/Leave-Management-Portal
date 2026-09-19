@@ -8,10 +8,19 @@
  *  Emp ID only for overlaps (leave type ignored).
  *  Exact key: EmpID | yyyy-MM-dd | yyyy-MM-dd
  *
- *  runLeaveCleanupPipeline()
- *    → resolve overlaps (in-place) → exact dedupe (in-place) → recalc
+ *  Manual:
+ *    runLeaveCleanupPipeline()
+ *
+ *  After import (DB / Excel):
+ *    scheduleLeaveCleanupPipeline_()  → runs in ~6 minutes via trigger
+ *    runLeaveCleanupPipelineFromTrigger() → pipeline + delete own trigger
+ *      and any other triggers for this handler
  * ============================================================
  */
+
+var CLEANUP_TRIGGER_HANDLER = 'runLeaveCleanupPipelineFromTrigger';
+var CLEANUP_TRIGGER_DELAY_MS = 6 * 60 * 1000; // 6 minutes
+var CLEANUP_TRIGGER_PROP = 'PENDING_CLEANUP_TRIGGER_ID';
 
 function leaveDateKey_(d) {
   if (!d || !(d instanceof Date) || isNaN(d.getTime())) return '';
@@ -84,7 +93,92 @@ function rangesOverlap_(s1, e1, s2, e2) {
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// Trigger scheduling (used by imports — pipeline is NOT run inline)
+// ---------------------------------------------------------------------------
+
+/**
+ * Schedule runLeaveCleanupPipelineFromTrigger ~6 minutes from now.
+ * Replaces any existing pending cleanup trigger so imports do not stack.
+ */
+function scheduleLeaveCleanupPipeline_() {
+  // Drop any previous pending cleanup triggers for this handler
+  deleteTriggersByHandler_(CLEANUP_TRIGGER_HANDLER);
+
+  var trigger = ScriptApp.newTrigger(CLEANUP_TRIGGER_HANDLER)
+    .timeBased()
+    .after(CLEANUP_TRIGGER_DELAY_MS)
+    .create();
+
+  try {
+    PropertiesService.getScriptProperties().setProperty(
+      CLEANUP_TRIGGER_PROP,
+      trigger.getUniqueId()
+    );
+  } catch (e) {}
+
+  Logger.log('Scheduled ' + CLEANUP_TRIGGER_HANDLER + ' in ~6 minutes (id=' +
+    trigger.getUniqueId() + ')');
+  return {
+    success: true,
+    message: 'Cleanup pipeline scheduled in ~6 minutes.',
+    triggerId: trigger.getUniqueId()
+  };
+}
+
+/**
+ * Trigger entry point: run pipeline, then delete this trigger and
+ * all other triggers for this handler (including disabled leftovers).
+ */
+function runLeaveCleanupPipelineFromTrigger() {
+  var result = null;
+  try {
+    result = runLeaveCleanupPipeline();
+  } catch (e) {
+    result = { success: false, message: e.message };
+    Logger.log('Pipeline from trigger failed: ' + e.message);
+  } finally {
+    try {
+      cleanupImportRelatedTriggers_();
+    } catch (te) {
+      Logger.log('Trigger cleanup error: ' + te.message);
+    }
+  }
+  return result;
+}
+
+/**
+ * Delete every project trigger whose handler is the cleanup-from-trigger
+ * function, plus clear the stored pending id.
+ * Apps Script does not expose a reliable "disabled" flag on Trigger;
+ * removing all triggers for this handler covers disabled/orphan ones.
+ */
+function cleanupImportRelatedTriggers_() {
+  var deleted = deleteTriggersByHandler_(CLEANUP_TRIGGER_HANDLER);
+  try {
+    PropertiesService.getScriptProperties().deleteProperty(CLEANUP_TRIGGER_PROP);
+  } catch (e) {}
+  Logger.log('Deleted ' + deleted + ' trigger(s) for ' + CLEANUP_TRIGGER_HANDLER);
+  return deleted;
+}
+
+function deleteTriggersByHandler_(handlerName) {
+  var count = 0;
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    try {
+      if (triggers[i].getHandlerFunction() === handlerName) {
+        ScriptApp.deleteTrigger(triggers[i]);
+        count++;
+      }
+    } catch (e) {
+      Logger.log('Could not delete trigger: ' + e.message);
+    }
+  }
+  return count;
+}
+
+// ---------------------------------------------------------------------------
+// Public pipeline API
 // ---------------------------------------------------------------------------
 
 function runLeaveCleanupPipeline() {
@@ -125,18 +219,9 @@ function cleanupDuplicateLeaveRecordsOnly() {
 }
 
 // ---------------------------------------------------------------------------
-// Overlap resolve — IN PLACE (no sheet rewrite)
+// Overlap resolve — IN PLACE
 // ---------------------------------------------------------------------------
 
-/**
- * Strategy:
- *  - Load all parseable leaves into memory
- *  - Iteratively find one overlapping pair per emp
- *  - Keep shorter (or first if equal length)
- *  - DELETE the longer row entirely
- *  - APPEND 0–2 side segments (with -a/-b on Entry Code)
- *  - Never blank Start/End on existing rows
- */
 function resolveOverlappingLeavesInPlace_() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblLeave');
@@ -162,14 +247,13 @@ function resolveOverlappingLeavesInPlace_() {
   var maxOuter = 30;
 
   for (var outer = 0; outer < maxOuter; outer++) {
-    // Re-read after each mutation so row numbers stay valid
     lastRow = sheet.getLastRow();
     if (lastRow < 2) break;
 
     var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
     var display = sheet.getRange(1, 1, lastRow, lastCol).getDisplayValues();
 
-    var leaves = []; // { row, empId, start, end, values }
+    var leaves = [];
     for (var i = 1; i < data.length; i++) {
       var empId = String(data[i][empIdx] || '').trim().toUpperCase();
       var s = leaveParseDate_(data[i][startIdx]) || leaveParseDate_(display[i][startIdx]);
@@ -184,7 +268,6 @@ function resolveOverlappingLeavesInPlace_() {
       });
     }
 
-    // Group by emp
     var byEmp = {};
     for (var li = 0; li < leaves.length; li++) {
       var id = leaves[li].empId;
@@ -209,7 +292,6 @@ function resolveOverlappingLeavesInPlace_() {
           var B = list[y];
           if (!rangesOverlap_(A.start, A.end, B.start, B.end)) continue;
 
-          // Identical → delete later row only
           if (A.start.getTime() === B.start.getTime() && A.end.getTime() === B.end.getTime()) {
             var dropRow = A.row < B.row ? B.row : A.row;
             sheet.deleteRow(dropRow);
@@ -228,7 +310,6 @@ function resolveOverlappingLeavesInPlace_() {
             else { small = B; large = A; }
           }
 
-          // Side segments of large outside small
           var segments = [];
           if (large.start.getTime() < small.start.getTime()) {
             var leftEnd = addDays_(small.start, -1);
@@ -243,7 +324,6 @@ function resolveOverlappingLeavesInPlace_() {
             }
           }
 
-          // Build append rows from large's values BEFORE deleting
           var baseCode = entryIdx >= 0
             ? stripAllSuffixes_(String(large.values[entryIdx] || 'LV'))
             : 'LV';
@@ -252,7 +332,6 @@ function resolveOverlappingLeavesInPlace_() {
           for (var si = 0; si < segments.length; si++) {
             var seg = segments[si];
             var newVals = large.values.slice();
-            // Pad to lastCol
             while (newVals.length < lastCol) newVals.push('');
             newVals[startIdx] = seg.start;
             newVals[endIdx] = seg.end;
@@ -268,11 +347,9 @@ function resolveOverlappingLeavesInPlace_() {
             appendRows.push(newVals);
           }
 
-          // Delete the longer row (full row — never clear date cells only)
           sheet.deleteRow(large.row);
           totalDeleted++;
 
-          // Append side segments
           if (appendRows.length) {
             if (typeof appendLeaveRows_ === 'function') {
               appendLeaveRows_(sheet, appendRows);
@@ -288,7 +365,7 @@ function resolveOverlappingLeavesInPlace_() {
       }
     });
 
-    if (!fixedOne) break; // stable
+    if (!fixedOne) break;
   }
 
   var msg = 'Overlap: deleted ' + totalDeleted + ' row(s), appended ' +
@@ -298,7 +375,7 @@ function resolveOverlappingLeavesInPlace_() {
 }
 
 // ---------------------------------------------------------------------------
-// Exact dedupe — IN PLACE (keep first, delete later full rows)
+// Exact dedupe — IN PLACE
 // ---------------------------------------------------------------------------
 
 function exactDedupeLeaveRecordsInPlace_() {
@@ -324,7 +401,7 @@ function exactDedupeLeaveRecordsInPlace_() {
 
   var seen = {};
   var rowsToDelete = [];
-  var entryUpdates = []; // { row, code } — strip -S1/-S2 only, never touch dates unless both parse
+  var entryUpdates = [];
 
   for (var i = 1; i < data.length; i++) {
     var empId = String(data[i][empIdx] || '').trim().toUpperCase();
@@ -341,7 +418,6 @@ function exactDedupeLeaveRecordsInPlace_() {
     }
     seen[fp] = sheetRow;
 
-    // Strip -S1/-S2 from entry code on kept row (preserve -a/-b)
     if (entryIdx >= 0) {
       var raw = String(data[i][entryIdx] || '');
       var clean = stripSSuffix_(raw);
@@ -350,8 +426,6 @@ function exactDedupeLeaveRecordsInPlace_() {
       }
     }
 
-    // Normalize date cells ONLY when current value is not already a Date
-    // and we successfully parsed — write the Date object (never blank)
     if (!(data[i][startIdx] instanceof Date) && s) {
       sheet.getRange(sheetRow, startIdx + 1).setValue(s);
     }
