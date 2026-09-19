@@ -2,19 +2,14 @@
  * ============================================================
  *  LEAVE IMPORT HELPERS + DARWINBOX IMPORT (trigger-friendly)
  * ============================================================
- *  Source: Leave_Application.csv in folder LEAVE_CSV_FOLDER_ID
- *  Target: tblLeave — append only rows not already present
- *  Dedup key: EmpID|yyyy-MM-dd|yyyy-MM-dd  (and Entry Code when present)
- *
- *  Does NOT compute No of Days / Leave Utilized / Entitlement Year
- *  (run calculateLeaveUtilized later).
+ *  Dedup key (strict): EmpID|yyyy-MM-dd|yyyy-MM-dd
+ *  Dates always normalized via parseLeaveDate_ before fingerprinting.
  * ============================================================
  */
 
 var LEAVE_CSV_FOLDER_ID = '1DZ2MYPvTR1HMSVUIE3fcCIBVLyrBqxD1';
 var DARWINBOX_CSV_NAME = 'Leave_Application.csv';
 
-/** Trigger entry point — Darwinbox only. */
 function importDarwinBoxLeaves() {
   return importDarwinBoxLeaves_();
 }
@@ -76,6 +71,7 @@ function importDarwinBoxLeaves_() {
       continue;
     }
 
+    // Strict dedup: Emp ID + normalized Start + normalized End
     var fp = fingerprintKey_(empId, startDate, endDate);
     if (ctx.existingKeys[fp]) {
       skippedDup++;
@@ -134,10 +130,6 @@ function importDarwinBoxLeaves_() {
     elapsedMs: ms
   };
 }
-
-// ---------------------------------------------------------------------------
-// Shared helpers (used by Darwinbox + Excel importers)
-// ---------------------------------------------------------------------------
 
 function loadLeaveImportContext_(leaveSheet) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -208,12 +200,20 @@ function loadLeaveImportContext_(leaveSheet) {
   for (var r = 1; r < leaveData.length; r++) {
     var emp = lEmp >= 0 ? String(leaveData[r][lEmp] || '').trim().toUpperCase() : '';
     if (!emp) continue;
+    // Always normalize dates so 19-Apr-2026 and 19/04/2026 map to the same key
     var s = lStart >= 0 ? parseLeaveDate_(leaveData[r][lStart]) : null;
     var en = lEnd >= 0 ? parseLeaveDate_(leaveData[r][lEnd]) : null;
-    if (s && en) existingKeys[fingerprintKey_(emp, s, en)] = true;
+    if (s && en) {
+      existingKeys[fingerprintKey_(emp, s, en)] = true;
+    }
     if (lEntry >= 0) {
       var code = String(leaveData[r][lEntry] || '').trim().toUpperCase();
-      if (code) existingEntryCodes[code] = true;
+      if (code) {
+        existingEntryCodes[code] = true;
+        // Also index base code without suffixes so BP-1023-a matches BP-1023
+        var base = code.replace(/-S[12]$/i, '').replace(/-[AB]$/i, '');
+        if (base) existingEntryCodes[base] = true;
+      }
     }
   }
 
@@ -247,8 +247,9 @@ function setLeaveCol_(row, headers, name, value) {
   if (i >= 0) row[i] = value;
 }
 
+/** Strict fingerprint: EMPID|yyyy-MM-dd|yyyy-MM-dd */
 function fingerprintKey_(empId, startDate, endDate) {
-  return String(empId).toUpperCase() + '|' +
+  return String(empId).trim().toUpperCase() + '|' +
     formatDateKey(startDate) + '|' + formatDateKey(endDate);
 }
 
@@ -287,47 +288,45 @@ function loadCsvFromFolder_(folderId, fileName) {
 
 /**
  * Parse: Date, ISO, dd-MMM-yyyy, dd-MMM-yy, dd/MM/yyyy [HH:mm], Excel serial.
+ * Always returns midnight local date (no time component).
  */
 function parseLeaveDate_(val) {
   if (val === null || val === undefined || val === '') return null;
   if (val instanceof Date && !isNaN(val.getTime())) {
     return new Date(val.getFullYear(), val.getMonth(), val.getDate());
   }
-  // Excel serial number
   if (typeof val === 'number' ||
       (/^\d+(\.\d+)?$/.test(String(val).trim()) && Number(val) > 20000 && Number(val) < 80000)) {
     return excelSerialToDate_(Number(val));
   }
 
   var s = String(val).trim();
-  // Strip trailing time if present (handled separately only for date part)
   var months = {
     jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
     jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
   };
 
-  // ISO yyyy-MM-dd
   var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
 
-  // dd-MMM-yyyy or dd-MMM-yy  (e.g. 31-Mar-26, 18-Sep-2026)
+  // 19-Apr-2026 / 19-Apr-26
   var mon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})/);
   if (mon) {
     var mi = months[mon[2].toLowerCase()];
     if (mi !== undefined) {
       var y = Number(mon[3]);
-      if (y < 100) y = y >= 70 ? 1900 + y : 2000 + y; // 26 → 2026, 99 → 1999
+      if (y < 100) y = y >= 70 ? 1900 + y : 2000 + y;
       return new Date(y, mi, Number(mon[1]));
     }
   }
 
-  // dd/MM/yyyy or dd/MM/yyyy HH:mm  (NG locale) e.g. 26/05/2026 00:00
-  var slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  // 08/08/2026 00  or  26/05/2026 00:00
+  var slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
   if (slash) {
     var day = Number(slash[1]);
     var month = Number(slash[2]);
     var year = Number(slash[3]);
-    // If first part > 12 it must be day; otherwise assume dd/MM (Nigeria)
+    if (year < 100) year = year >= 70 ? 1900 + year : 2000 + year;
     return new Date(year, month - 1, day);
   }
 
