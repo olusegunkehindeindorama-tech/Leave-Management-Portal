@@ -1,8 +1,7 @@
 /**
- * Lightweight CacheService layer.
- * loadShiftMapForEmp_ supports WIDE tblShift (Emp ID | date cols) and legacy LONG.
+ * CacheService layer + shift map (WIDE tblShift date headers may be Date objects).
  */
-var CACHE_TTL_SEC = 90;
+var CACHE_TTL_SEC = 180;
 
 function cacheGet_(key) {
   try {
@@ -19,7 +18,7 @@ function cachePut_(key, value) {
 }
 
 function cacheClearAll_() {
-  try { CacheService.getScriptCache().removeAll(['pol', 'emp_all', 'sb']); } catch (e) {}
+  try { CacheService.getScriptCache().removeAll(['pol', 'emp_map', 'sb', 'filter_opts']); } catch (e) {}
 }
 
 function loadPoliciesCached_() {
@@ -62,10 +61,28 @@ function loadEmployeeMapCached_() {
   return map;
 }
 
+/** Normalize a header cell (Date or string) to yyyy-MM-dd */
+function shiftHeaderToKey_(cell) {
+  if (cell instanceof Date && !isNaN(cell.getTime())) {
+    try {
+      return Utilities.formatDate(cell, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    } catch (e) {
+      return cell.getFullYear() + '-' +
+        ('0' + (cell.getMonth() + 1)).slice(-2) + '-' +
+        ('0' + cell.getDate()).slice(-2);
+    }
+  }
+  var ds = String(cell || '').trim();
+  if (ds.length >= 10) {
+    var m = ds.match(/(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+    return ds.substring(0, 10);
+  }
+  return ds;
+}
+
 /**
  * Shift map for one employee: { 'yyyy-MM-dd': code }
- * WIDE sheet: one row per emp — O(rows) find, then O(dates) fill.
- * LONG sheet (legacy): scan matching emp rows.
  */
 function loadShiftMapForEmp_(empId) {
   var key = 'sh_' + String(empId).toUpperCase();
@@ -77,39 +94,46 @@ function loadShiftMapForEmp_(empId) {
   var map = {};
   if (!sh) return map;
 
-  var data = sh.getDataRange().getValues();
-  if (data.length < 2) return map;
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2 || lastCol < 2) return map;
 
   var target = String(empId).trim().toUpperCase();
-  var h1 = String(data[0][1] || '').trim();
-  var isWide = /^\d{4}-\d{2}-\d{2}/.test(h1) ||
-    (String(data[0][0] || '').toLowerCase().indexOf('emp') === 0 && h1.toLowerCase() !== 'date');
+
+  // Header row only first — detect wide vs long
+  var headerRow = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  var h1 = shiftHeaderToKey_(headerRow[1]);
+  var isWide = /^\d{4}-\d{2}-\d{2}$/.test(h1) ||
+    (String(headerRow[0] || '').toLowerCase().indexOf('emp') === 0 &&
+     String(headerRow[1] || '').toLowerCase() !== 'date');
 
   if (isWide) {
     var dateHeaders = [];
-    for (var c = 1; c < data[0].length; c++) {
-      var ds = String(data[0][c] || '').trim();
-      if (ds.length >= 10) ds = ds.substring(0, 10);
-      dateHeaders.push(ds);
+    for (var c = 1; c < headerRow.length; c++) {
+      dateHeaders.push(shiftHeaderToKey_(headerRow[c]));
     }
-    for (var r = 1; r < data.length; r++) {
-      if (String(data[r][0] || '').trim().toUpperCase() !== target) continue;
-      for (var c2 = 1; c2 < data[r].length; c2++) {
-        var code = String(data[r][c2] || '').trim().toUpperCase();
+    // Emp ID column — scan rows for match (only col A + full row when found)
+    var empCol = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    var foundRow = -1;
+    for (var r = 0; r < empCol.length; r++) {
+      if (String(empCol[r][0] || '').trim().toUpperCase() === target) {
+        foundRow = r + 2;
+        break;
+      }
+    }
+    if (foundRow > 0) {
+      var rowVals = sh.getRange(foundRow, 1, 1, lastCol).getValues()[0];
+      for (var c2 = 1; c2 < rowVals.length; c2++) {
+        var code = String(rowVals[c2] || '').trim().toUpperCase();
         if (code && dateHeaders[c2 - 1]) map[dateHeaders[c2 - 1]] = code;
       }
-      break; // one row per emp
     }
   } else {
+    var data = sh.getDataRange().getValues();
     for (var i = 1; i < data.length; i++) {
       if (String(data[i][0] || '').trim().toUpperCase() !== target) continue;
       var d = data[i][1];
-      var k;
-      if (d instanceof Date && !isNaN(d.getTime())) {
-        k = d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
-      } else {
-        k = String(d || '').trim().substring(0, 10);
-      }
+      var k = shiftHeaderToKey_(d);
       if (k) map[k] = String(data[i][2] || '').trim().toUpperCase();
     }
   }
@@ -146,6 +170,29 @@ function invalidateEmpCaches_(empId) {
     var c = CacheService.getScriptCache();
     c.remove('lv_' + String(empId).toUpperCase());
     c.remove('sh_' + String(empId).toUpperCase());
-    c.remove('emp_map');
+    // Keep emp_map — only drop on full sync
   } catch (e) {}
+}
+
+/** Unique BU + Department lists for multi-select filters */
+function getFilterOptions() {
+  var hit = cacheGet_('filter_opts');
+  if (hit) return hit;
+  var empMap = loadEmployeeMapCached_();
+  var bus = {};
+  var depts = {};
+  Object.keys(empMap).forEach(function (id) {
+    if (id === '_headers') return;
+    var e = empMap[id];
+    var bu = String(e['Business Unit'] || '').trim();
+    var dept = String(e['Department'] || '').trim();
+    if (bu) bus[bu] = true;
+    if (dept) depts[dept] = true;
+  });
+  var out = {
+    bus: Object.keys(bus).sort(),
+    departments: Object.keys(depts).sort()
+  };
+  cachePut_('filter_opts', out);
+  return out;
 }
