@@ -5,6 +5,8 @@ function doGet(e) {
       return HtmlService.createHtmlOutput(getIndexHtml_())
         .setTitle('Leave Management')
         .setFaviconUrl('https://ssl.gstatic.com/docs/spreadsheets/favicon3.ico')
+        .setTitle('Leave Management Portal')
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
         .addMetaTag('viewport', 'width=device-width, initial-scale=1');
     }
   } catch (err) {
