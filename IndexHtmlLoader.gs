@@ -1,3 +1,5 @@
 function getIndexHtml_() {
-  return INDEX_HTML_P0_ + INDEX_HTML_P1_ + INDEX_HTML_P2_ + INDEX_HTML_P3_ + INDEX_HTML_P4_;
+  var b64 = INDEX_B64_P0_ + INDEX_B64_P1_ + INDEX_B64_P2_ + INDEX_B64_P3_ + INDEX_B64_P4_;
+  var bytes = Utilities.base64Decode(b64);
+  return Utilities.newBlob(bytes).getDataAsString();
 }
