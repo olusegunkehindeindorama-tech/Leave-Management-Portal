@@ -1,8 +1,3 @@
 function getIndexHtml_() {
-  var parts = []
-    .concat(indexHtmlPart0_())
-    .concat(indexHtmlPart1_())
-    .concat(indexHtmlPart2_())
-    .concat(indexHtmlPart3_());
-  return Utilities.newBlob(Utilities.base64Decode(parts.join(''))).getDataAsString('UTF-8');
+  return INDEX_HTML_P0_ + INDEX_HTML_P1_ + INDEX_HTML_P2_ + INDEX_HTML_P3_ + INDEX_HTML_P4_;
 }
