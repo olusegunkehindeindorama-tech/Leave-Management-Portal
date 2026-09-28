@@ -66,7 +66,7 @@
     <div id="loginError" class="error-msg"></div>
     <div class="input-group"><label>User ID</label><input type="text" id="userId" autocomplete="username" onkeydown="handleLoginKey(event)"></div>
     <div class="input-group"><label>Password</label><input type="password" id="password" autocomplete="current-password" onkeydown="handleLoginKey(event)"></div>
-    <button class="btn full" onclick="attemptLogin()" id="loginBtn">Log In</button>
+    <button type="button" class="btn full" onclick="attemptLogin()" id="loginBtn">Log In</button>
     <div class="support-text">Forgot password? <button type="button" class="btn linkish" onclick="showResetPanel()">Reset via security question</button><br>or contact <b>Mr. Olusegun Kehinde</b>.</div>
     <div id="resetPanel">
       <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">
@@ -366,14 +366,50 @@ function getChipValues(containerId){
 }
 
 function attemptLogin(){
-  const userId=document.getElementById('userId').value.trim(),pass=document.getElementById('password').value;
-  const btn=document.getElementById('loginBtn'),err=document.getElementById('loginError');
-  if(!userId||!pass){err.innerText='Enter ID and password';err.style.display='block';return}
-  btn.disabled=true;btn.innerText='...';
-  google.script.run.withSuccessHandler(r=>{
-    btn.disabled=false;btn.innerText='Log In';
-    if(r.success){currentUser=r.user;loadDashboard()}else{err.innerText=r.message;err.style.display='block'}
-  }).withFailureHandler(e=>{btn.disabled=false;btn.innerText='Log In';err.innerText=e.message;err.style.display='block'}).loginUser(userId,pass);
+  var userIdEl=document.getElementById('userId');
+  var passEl=document.getElementById('password');
+  var btn=document.getElementById('loginBtn');
+  var err=document.getElementById('loginError');
+  if(!err){alert('loginError element missing');return}
+  err.style.display='block';
+  err.style.color='#dc2626';
+  if(!userIdEl||!passEl){err.innerText='Login form missing fields.';return}
+  var userId=String(userIdEl.value||'').trim();
+  var pass=String(passEl.value||'');
+  if(!userId||!pass){err.innerText='Enter ID and password';return}
+  if(btn){btn.disabled=true;btn.innerText='Signing in…';}
+  err.innerText='Connecting…';
+  if(typeof google==='undefined'||!google.script||!google.script.run){
+    if(btn){btn.disabled=false;btn.innerText='Log In';}
+    err.innerText='Not running as Apps Script web app. Open the Deployed web app URL (not a local HTML file).';
+    return;
+  }
+  try{
+    google.script.run
+      .withSuccessHandler(function(r){
+        if(btn){btn.disabled=false;btn.innerText='Log In';}
+        if(!r){err.innerText='Empty response from server.';return}
+        if(r.success){
+          currentUser=r.user;
+          err.style.display='none';
+          loadDashboard();
+        }else{
+          err.innerText=r.message||'Login failed.';
+          err.style.display='block';
+        }
+      })
+      .withFailureHandler(function(e){
+        if(btn){btn.disabled=false;btn.innerText='Log In';}
+        var msg=(e&&e.message)?e.message:String(e);
+        err.innerText='Server error: '+msg;
+        err.style.display='block';
+      })
+      .loginUser(userId,pass);
+  }catch(ex){
+    if(btn){btn.disabled=false;btn.innerText='Log In';}
+    err.innerText='Client error: '+(ex.message||ex);
+    err.style.display='block';
+  }
 }
 function loadDashboard(){
   document.getElementById('loginView').classList.remove('active');
