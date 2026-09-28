@@ -1,7 +1,6 @@
 /**
- * Search employees by Emp ID OR Emp Name (partial match).
- * NOTE: If Code.gs also defines searchEmployees, remove the Code.gs copy
- * so this definition is used (Apps Script does not allow duplicates).
+ * Search employees by Emp ID OR Emp Name (partial, case-insensitive).
+ * Replaces any older ID-only search in Code.gs — keep only ONE definition.
  */
 function searchEmployees(query, limit) {
   var empMap = loadEmployeeMapCached_();
@@ -22,7 +21,6 @@ function searchEmployees(query, limit) {
         department: String(e['Department'] || ''),
         bu: String(e['Business Unit'] || '')
       });
-      if (matches.length >= max * 3) break; // collect extra then sort/trim
     }
   }
   matches.sort(function (a, b) {
@@ -34,13 +32,12 @@ function searchEmployees(query, limit) {
   return matches.slice(0, max);
 }
 
-/** Multi-value filters: "A|B|C" or single string */
 function matchFilterMulti_(cellValue, filterStr) {
   if (!filterStr) return true;
   var cell = String(cellValue || '').trim().toUpperCase();
   var parts = String(filterStr).split('|').map(function (s) {
     return s.trim().toUpperCase();
   }).filter(Boolean);
-  if (!parts.length) return true;
+  if (!parts.length || (parts.length === 1 && parts[0] === 'ALL')) return true;
   return parts.indexOf(cell) !== -1;
 }
