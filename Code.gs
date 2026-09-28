@@ -1,21 +1,10 @@
-/** SERVE THE WEB APP */
+/** SERVE THE WEB APP — plain Index.html only (no base64 loader) */
 function doGet(e) {
-  try {
-    if (typeof getIndexHtml_ === 'function') {
-      return HtmlService.createHtmlOutput(getIndexHtml_())
-        .setTitle('Leave Management')
-        .setFaviconUrl('https://ssl.gstatic.com/docs/spreadsheets/favicon3.ico')
-        .setTitle('Leave Management Portal')
-        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-        .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-    }
-  } catch (err) {
-    Logger.log('getIndexHtml_ failed: ' + err.message);
-  }
   return HtmlService.createTemplateFromFile('Index')
       .evaluate()
-      .setTitle('Leave Management')
+      .setTitle('Leave Management Portal')
       .setFaviconUrl('https://ssl.gstatic.com/docs/spreadsheets/favicon3.ico')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -163,7 +152,6 @@ function submitLeaveRequest(formData, userSession) {
     }
   }
 
-  // Date-only: local Y/M/D — no UTC midnight from new Date('yyyy-MM-dd')
   var sDate = parseDateOnly_(formData.startDate);
   var eDate = parseDateOnly_(formData.endDate);
   if (!sDate || !eDate) {
@@ -189,7 +177,6 @@ function submitLeaveRequest(formData, userSession) {
   };
   tblLeave.appendRow(headers.map(function(h) { return rowObj[h] !== undefined ? rowObj[h] : ''; }));
 
-  // Force date format on start/end columns for the new row
   try {
     var last = tblLeave.getLastRow();
     var si = headers.indexOf('Start Date');
@@ -202,7 +189,6 @@ function submitLeaveRequest(formData, userSession) {
   return { success: true, message: 'Leave recorded as ' + newEntryCode + ' (utilized ' + utilized + ' days)' };
 }
 
-/** History for UI — start/end as yyyy-MM-dd strings (timezone-safe). */
 function getEmployeeLeaveHistory(empId) {
   var rows = loadLeaveRowsForEmp_(empId);
   var history = rows.map(function(r) {
