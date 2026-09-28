@@ -3,15 +3,18 @@
 <head>
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Full UI is in the project artifacts Index.html - if this is a stub, paste from Apps Script or artifacts -->
-  <title>Leave Management</title>
+  <title>Leave Management Portal</title>
 </head>
 <body>
-<script>
-// NOTE: Deploy uses full Index from Apps Script editor.
-// After pull, replace this file contents with the full Index.html from the release
-// or copy from /artifacts/Index_full.html provided in chat.
-document.write('Please paste the full Index.html from the project artifacts into this file in Apps Script.');
-</script>
+  <p><strong>Leave Management Portal – UI entry</strong></p>
+  <p>The full interactive UI is embedded as base64 in <code>IndexB64P0.gs</code> … <code>IndexB64P8.gs</code>
+     and assembled by <code>IndexHtmlLoader.gs</code> (<code>getIndexHtml_()</code>).</p>
+  <p>In Apps Script, <code>doGet</code> should return <code>HtmlService.createHtmlOutput(getIndexHtml_())</code>
+     (or equivalent) so the full UI is served.</p>
+  <p>The complete source HTML used to build the base64 chunks lives in the project artifacts
+     as <code>Index.html</code> / <code>Index_full.html</code> (re-generate B64 parts from that file if the UI changes).</p>
+  <script>
+    document.write('<p style="color:#64748b;font-size:13px;">If you see this page in the web app, wire doGet to getIndexHtml_() from IndexHtmlLoader.gs.</p>');
+  </script>
 </body>
 </html>
