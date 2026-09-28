@@ -3,18 +3,774 @@
 <head>
   <base target="_top">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Leave Management Portal</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{--primary:#4f46e5;--secondary:#06b6d4;--accent:#f97316;--success:#16a34a;--danger:#dc2626;--warning:#ca8a04;--sidebar:#111827;--sidebar-soft:#1f2937;--surface:#fff;--muted:#64748b;--line:#e2e8f0;--light:#f1f5f9;--dark:#0f172a}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;font-family:Inter,sans-serif;color:var(--dark);background:var(--light)}
+    button,input,select,textarea{font-family:inherit}.view{display:none;min-height:100vh;width:100%}.view.active{display:flex}
+    #loginView{align-items:center;justify-content:center;padding:24px;background:linear-gradient(135deg,#312e81,#0891b2)}
+    .login-card{width:min(420px,100%);padding:40px;border-radius:28px;background:rgba(255,255,255,.94);box-shadow:0 24px 80px rgba(15,23,42,.35)}
+    .brand-mark{width:62px;height:62px;border-radius:18px;display:grid;place-items:center;margin:0 auto 16px;color:#fff;font-size:30px;background:linear-gradient(135deg,var(--primary),var(--secondary))}
+    .login-card h1{margin:0;text-align:center;font-size:28px}.login-card p{text-align:center;color:var(--muted)}
+    .input-group{margin-bottom:18px;position:relative}label{display:block;margin-bottom:7px;font-size:13px;font-weight:700;color:#334155}
+    input,select,textarea{width:100%;padding:12px 13px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;outline:none}
+    input.field-error,select.field-error,textarea.field-error{border-color:var(--danger)!important;box-shadow:0 0 0 3px rgba(220,38,38,.15)}
+    .btn{border:none;border-radius:12px;padding:12px 16px;font-weight:800;cursor:pointer;color:#fff;background:linear-gradient(135deg,var(--primary),var(--secondary))}
+    .btn:disabled{opacity:.62;cursor:not-allowed}.btn.secondary{background:#475569}.btn.warning{background:var(--warning)}.btn.success{background:var(--success)}.btn.danger{background:var(--danger)}.btn.ghost{background:#fff;color:var(--dark);border:1px solid var(--line)}.btn.full{width:100%}.btn.linkish{background:none;color:var(--primary);border:none;padding:0;font-weight:700;text-decoration:underline;cursor:pointer}
+    .error-msg{display:none;margin:14px 0;color:var(--danger);font-weight:700;font-size:13px;text-align:center}
+    .inline-error{display:none;margin:8px 0 0;color:var(--danger);font-weight:700;font-size:13px}
+    .support-text{margin-top:18px;font-size:12px;color:var(--muted);text-align:center}#resetPanel{display:none;margin-top:12px;text-align:left}
+    #appView{flex-direction:row}.sidebar{width:280px;color:#fff;background:linear-gradient(180deg,var(--sidebar),var(--sidebar-soft));display:flex;flex-direction:column;transition:width .25s ease;overflow:hidden;position:relative}
+    .sidebar.collapsed{width:56px}
+    .sidebar.collapsed .sidebar-header h2,.sidebar.collapsed .sidebar-header small,.sidebar.collapsed .user-profile b,.sidebar.collapsed .admin-badge,.sidebar.collapsed .logout-btn{display:none}
+    .sidebar.collapsed .menu-item{padding:14px 8px;font-size:12px;text-align:center;border-left-width:0}
+    .sidebar-toggle{position:absolute;top:12px;right:8px;background:rgba(255,255,255,.15);border:none;color:#fff;width:28px;height:28px;border-radius:8px;cursor:pointer;font-weight:800;z-index:5}
+    .sidebar.collapsed .sidebar-toggle{right:14px}
+    .sidebar-header{padding:26px 22px;border-bottom:1px solid rgba(255,255,255,.08)}.sidebar-header h2{margin:0;font-size:20px}.sidebar-header small{color:#93c5fd}
+    .menu{flex:1;padding:18px 0}.menu-item{padding:15px 24px;cursor:pointer;color:#cbd5e1;font-weight:700;border-left:4px solid transparent}
+    .menu-item:hover,.menu-item.active{color:#fff;background:rgba(255,255,255,.08);border-left-color:var(--secondary)}#adminMenuBtn{display:none}
+    .user-profile{padding:20px 24px;border-top:1px solid rgba(255,255,255,.08)}.admin-badge{display:none;margin-left:8px;padding:3px 7px;border-radius:999px;background:var(--accent);font-size:11px}
+    .logout-btn{display:inline-block;margin-top:10px;color:#fca5a5;cursor:pointer;font-weight:800}
+    .main-content{flex:1;padding:34px;overflow-y:auto;max-height:100vh}.module{display:none}.module.active{display:block}
+    h1{margin:0;font-size:28px}.subtitle{margin:6px 0 0;color:var(--muted)}
+    .card{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:24px;box-shadow:0 12px 35px rgba(15,23,42,.07);margin-bottom:22px}
+    .grid-2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+    .profile-card{display:none;background:#f8fafc;border:1px solid var(--line);border-radius:18px;padding:18px}
+    .profile-pill{display:inline-flex;padding:8px 10px;border-radius:999px;background:#fff;border:1px solid var(--line);margin:4px 8px 4px 0;font-size:13px}
+    table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:11px 10px;text-align:left;border-bottom:1px solid var(--line)}th{background:#eef2ff;color:#3730a3;font-size:12px;text-transform:uppercase}
+    .autocomplete-panel{display:none;position:absolute;z-index:30;left:0;right:0;top:calc(100% + 4px);max-height:260px;overflow-y:auto;border:1px solid var(--line);background:#fff;border-radius:12px;box-shadow:0 18px 45px rgba(15,23,42,.18)}
+    .autocomplete-item{padding:10px 12px;cursor:pointer;border-bottom:1px solid #f1f5f9}.autocomplete-item:hover,.autocomplete-item.active{background:#eef2ff}
+    .modal-backdrop{display:none;position:fixed;inset:0;z-index:1000;background:rgba(15,23,42,.58);align-items:center;justify-content:center;padding:20px}
+    .modal-card{width:min(560px,100%);background:#fff;border-radius:22px;padding:24px}.actions{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}.cal-head{text-align:center;font-size:11px;font-weight:800;color:var(--muted);padding:6px}
+    .cal-cell{min-height:78px;border:1px solid var(--line);border-radius:10px;padding:6px;background:#fff;cursor:pointer;font-size:11px}
+    .cal-cell:hover{border-color:var(--primary);background:#eef2ff}.cal-cell.empty{background:transparent;border:none;cursor:default}
+    .cal-cell.has-leave{background:#fef3c7;border-color:#f59e0b}.cal-daynum{font-weight:800}.cal-shift{margin-top:2px;font-weight:700;color:var(--primary)}.cal-leave{margin-top:2px;color:#b45309;font-weight:600;font-size:10px}
+    .table-wrap{overflow-x:auto;max-height:420px;overflow-y:auto}
+    .profile-summary-hero{text-align:center;font-weight:800;font-size:18px;margin-bottom:12px;line-height:1.5}
+    .chip-filter{display:flex;flex-wrap:wrap;gap:8px;max-height:140px;overflow-y:auto;padding:10px;border:1px solid #cbd5e1;border-radius:12px;background:#fff}
+    .chip-filter label{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:#f1f5f9;font-size:12px;font-weight:600;cursor:pointer;border:1px solid transparent}
+    .chip-filter label:has(input:checked){background:#eef2ff;border-color:#4f46e5;color:#3730a3}
+    .chip-filter input{width:auto;margin:0}
+    .toast{position:fixed;bottom:24px;right:24px;z-index:2000;max-width:360px;padding:14px 18px;border-radius:12px;background:#111827;color:#fff;font-weight:600;font-size:14px;box-shadow:0 12px 40px rgba(0,0,0,.25);display:none}
+    .toast.error{background:#991b1b}.toast.ok{background:#166534}
+    @media(max-width:900px){#appView{flex-direction:column}.sidebar{width:100%}.grid-2,.grid-3{grid-template-columns:1fr}.main-content{max-height:none;padding:20px}}
+  </style>
 </head>
 <body>
-  <p><strong>Leave Management Portal – UI entry</strong></p>
-  <p>The full interactive UI is embedded as base64 in <code>IndexB64P0.gs</code> … <code>IndexB64P8.gs</code>
-     and assembled by <code>IndexHtmlLoader.gs</code> (<code>getIndexHtml_()</code>).</p>
-  <p>In Apps Script, <code>doGet</code> should return <code>HtmlService.createHtmlOutput(getIndexHtml_())</code>
-     (or equivalent) so the full UI is served.</p>
-  <p>The complete source HTML used to build the base64 chunks lives in the project artifacts
-     as <code>Index.html</code> / <code>Index_full.html</code> (re-generate B64 parts from that file if the UI changes).</p>
-  <script>
-    document.write('<p style="color:#64748b;font-size:13px;">If you see this page in the web app, wire doGet to getIndexHtml_() from IndexHtmlLoader.gs.</p>');
-  </script>
+<div id="loginView" class="view active">
+  <div class="login-card">
+    <div class="brand-mark">🌿</div>
+    <h1>Leave Management</h1>
+    <p>Sign in with your assigned User ID and password.</p>
+    <div id="loginError" class="error-msg"></div>
+    <div class="input-group"><label>User ID</label><input type="text" id="userId" autocomplete="username" onkeydown="handleLoginKey(event)"></div>
+    <div class="input-group"><label>Password</label><input type="password" id="password" autocomplete="current-password" onkeydown="handleLoginKey(event)"></div>
+    <button class="btn full" onclick="attemptLogin()" id="loginBtn">Log In</button>
+    <div class="support-text">Forgot password? <button type="button" class="btn linkish" onclick="showResetPanel()">Reset via security question</button><br>or contact <b>Mr. Olusegun Kehinde</b>.</div>
+    <div id="resetPanel">
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:16px 0">
+      <div class="input-group"><label>User ID for reset</label><input type="text" id="resetUserId"></div>
+      <button class="btn secondary full" onclick="loadSecurityQuestion()" id="loadQBtn">Load security question</button>
+      <div id="questionBox" style="display:none;margin-top:14px">
+        <p style="font-size:13px;font-weight:700" id="securityQuestionText"></p>
+        <div class="input-group"><label>Your answer</label><input type="text" id="resetAnswer"></div>
+        <button class="btn full" onclick="submitPasswordReset()" id="resetBtn">Reset password</button>
+      </div>
+      <div id="resetMsg" class="error-msg"></div>
+    </div>
+  </div>
+</div>
+
+<div id="appView" class="view">
+  <aside class="sidebar">
+    <div class="sidebar-header"><button type="button" class="sidebar-toggle" onclick="toggleSidebar()" title="Collapse/Expand">☰</button><h2>Leave Management</h2><small>Employee leave operations</small></div>
+    <nav class="menu">
+      <div class="menu-item active" data-target="leaveEntryModule" onclick="switchModule(this)">📝 Leave Entry</div>
+      <div class="menu-item" data-target="reportsModule" onclick="switchModule(this)">📊 Reports & Balances</div>
+      <div class="menu-item" data-target="shiftModule" onclick="switchModule(this)">📅 Shift Roster</div>
+      <div class="menu-item" id="adminMenuBtn" data-target="adminModule" onclick="switchModule(this)">⚙️ Admin Hub</div>
+      <div class="menu-item" onclick="openAttendanceRecon()">📋 Attendance Reconciliation</div>
+    </nav>
+    <div class="user-profile"><div><b id="displayUserName">—</b><span id="adminBadge" class="admin-badge">ADMIN</span></div><span class="logout-btn" onclick="logout()">Logout</span></div>
+  </aside>
+  <main class="main-content">
+    <section id="leaveEntryModule" class="module active">
+      <h1>Leave Entry</h1>
+      <p class="subtitle">Balances use carry-forward &amp; deduct-from rules. Dropdown lists all entitled types.</p>
+      <div class="card">
+        <div class="grid-2">
+          <div class="input-group">
+            <label>Employee ID or Name</label>
+            <input type="text" id="formEmpId" oninput="handleEmployeeSearch()" onkeydown="handleEmployeeKey(event)" placeholder="Type Emp ID or Name" autocomplete="off">
+            <div id="employeeSuggestions" class="autocomplete-panel"></div>
+          </div>
+          <div class="input-group"><label>&nbsp;</label><button class="btn full" onclick="fetchEmployeeDetails()">Load Employee</button></div>
+        </div>
+        <div id="employeeDisplay" class="profile-card">
+          <div id="profileSummary"></div>
+          <h3>Balances (Balance Page Show = Yes)</h3>
+          <div id="balanceTable"></div>
+          <h3>New Leave Request</h3>
+          <div id="leaveFormError" class="inline-error"></div>
+          <div class="grid-3">
+            <div class="input-group"><label>Leave Type (all entitled)</label><select id="leaveTypeSelect"></select></div>
+            <div class="input-group"><label>Start Date</label><input type="date" id="startDate"></div>
+            <div class="input-group"><label>End Date</label><input type="date" id="endDate"></div>
+          </div>
+          <div class="input-group"><label>Leave Reason</label>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:6px">
+              <label style="font-weight:500"><input type="radio" name="leaveReasonOpt" value="Personal" checked onchange="onReasonOptChange()"> Personal</label>
+              <label style="font-weight:500"><input type="radio" name="leaveReasonOpt" value="Family Emergency" onchange="onReasonOptChange()"> Family Emergency</label>
+              <label style="font-weight:500"><input type="radio" name="leaveReasonOpt" value="Sick" onchange="onReasonOptChange()"> Sick</label>
+              <label style="font-weight:500"><input type="radio" name="leaveReasonOpt" value="Custom" onchange="onReasonOptChange()"> Custom</label>
+            </div>
+            <textarea id="leaveReason" rows="2" style="display:none;margin-top:8px" placeholder="Type custom reason…"></textarea>
+          </div>
+          <div class="actions">
+            <button class="btn" onclick="submitLeave()" id="submitLeaveBtn">Submit Request</button>
+            <span id="lastEntryCode" style="font-weight:800;color:#4f46e5"></span>
+          </div>
+          <div class="actions" style="margin-top:28px;justify-content:space-between">
+            <h3 style="margin:0">Leave records (newest first)</h3>
+            <button class="btn secondary" onclick="exportHistoryCsv()">Export CSV</button>
+          </div>
+          <div class="table-wrap" style="margin-top:10px"><table><tbody id="historyTableBody"><tr><td>Loading…</td></tr></tbody></table></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="reportsModule" class="module">
+      <h1>Reports</h1>
+      <div class="card">
+        <h3>Balances</h3>
+        <div class="grid-2">
+          <div class="input-group">
+            <label>Business Unit</label>
+            <div class="actions" style="margin-bottom:8px">
+              <button type="button" class="btn ghost" onclick="selectAllChips('balBuChips',true)">All</button>
+              <button type="button" class="btn ghost" onclick="selectAllChips('balBuChips',false)">Clear</button>
+            </div>
+            <div id="balBuChips" class="chip-filter"></div>
+          </div>
+          <div class="input-group">
+            <label>Department</label>
+            <div class="actions" style="margin-bottom:8px">
+              <button type="button" class="btn ghost" onclick="selectAllChips('balDeptChips',true)">All</button>
+              <button type="button" class="btn ghost" onclick="selectAllChips('balDeptChips',false)">Clear</button>
+            </div>
+            <div id="balDeptChips" class="chip-filter"></div>
+          </div>
+        </div>
+        <div class="actions" style="margin-top:16px">
+          <button class="btn" onclick="downloadBalanceReport()" id="balCsvBtn">Balance CSV</button>
+          <button class="btn success" onclick="downloadEntitlementBalance()">Export Entitlement & Balance</button>
+          <button class="btn secondary" onclick="runRefreshEmployeeBalances()">Refresh Employee Leave balance</button>
+        </div>
+        <p id="balStatus" style="font-size:13px;color:#64748b"></p>
+      </div>
+      <div class="card">
+        <h3>Leave records by date range (overlap)</h3>
+        <div class="grid-2">
+          <div class="input-group"><label>From *</label><input type="date" id="rangeFrom"></div>
+          <div class="input-group"><label>To *</label><input type="date" id="rangeTo"></div>
+        </div>
+        <div class="actions">
+          <button class="btn" onclick="runLeaveRangeFilter()" id="rangeLoadBtn">Load</button>
+          <button class="btn secondary" onclick="downloadLeaveRangeCsv()" id="rangeCsvBtn">CSV</button>
+        </div>
+        <p id="rangeStatus" style="font-size:13px;color:#64748b"></p>
+        <div class="table-wrap" style="margin-top:12px"><table><tbody id="leaveRecordsBody"><tr><td>Choose From/To and Load.</td></tr></tbody></table></div>
+      </div>
+    </section>
+
+    <section id="shiftModule" class="module">
+      <h1>Shift Roster</h1>
+      <p class="subtitle">Shift codes + leave days highlighted. Click day to edit shift.</p>
+      <div class="card">
+        <div class="grid-3">
+          <div class="input-group">
+            <label>Emp ID or Name</label>
+            <input id="shiftEmpId" oninput="handleShiftEmpSearch()" onkeydown="handleShiftEmpKey(event)" placeholder="Type ID or Name" autocomplete="off">
+            <div id="shiftEmpSuggestions" class="autocomplete-panel"></div>
+          </div>
+          <div class="input-group"><label>Year</label><input type="number" id="shiftYear"></div>
+          <div class="input-group"><label>Month</label><input type="number" id="shiftMonth" min="1" max="12"></div>
+        </div>
+        <div class="actions">
+          <button class="btn" onclick="loadShiftCalendar()">Load calendar</button>
+          <button class="btn warning" onclick="runShiftImport()">Process Drive files</button>
+        </div>
+        <div id="shiftCalTitle" style="margin:16px 0 8px;font-weight:800"></div>
+        <div class="cal-grid" id="shiftCalHead"></div>
+        <div class="cal-grid" id="shiftCalBody" style="margin-top:6px"></div>
+      </div>
+    </section>
+
+    <section id="adminModule" class="module">
+      <h1>Admin Hub</h1>
+      <p class="subtitle">Maintenance jobs not on Leave Entry, Reports, or Shift Roster.</p>
+      <div class="card">
+        <h3>Leave utilization</h3>
+        <p style="color:var(--muted);font-size:14px;margin-top:0">Re-runs Shift Roaster / Actual Days logic for every row in tblLeave.</p>
+        <div class="actions">
+          <button class="btn warning" onclick="runRecalculateLeaveUtilized()" id="recalcBtn">Recalculate all Leave Utilized</button>
+        </div>
+        <p id="recalcStatus" style="font-size:13px;color:var(--muted);margin-top:12px"></p>
+      </div>
+      <div class="card actions">
+        <button class="btn success" onclick="runDarwinBoxImport()">Import DarwinBox</button>
+        <button class="btn" onclick="downloadDarwinBoxExport()">Export for DB</button>
+        <button class="btn secondary" onclick="runEmployeeSync()">Sync Employees</button>
+        <button class="btn warning" onclick="runExcelLeaveImport()">Excel Leave Import</button>
+      </div>
+      <div class="card">
+        <h3>Employee master sync</h3>
+        <p style="color:var(--muted);font-size:14px;margin-top:0">Reads Employee List for Leave.csv, updates tblEmployee, refreshes balances.</p>
+        <div class="actions"><button class="btn secondary" onclick="runEmployeeSync()">Sync Employees from CSV</button></div>
+      </div>
+      <div class="card">
+        <h3>Leave data cleanup</h3>
+        <p style="color:var(--muted);font-size:14px;margin-top:0">Deduplicates emp|start|end, resolves overlaps, recalculates utilization.</p>
+        <div class="actions"><button class="btn warning" onclick="runLeaveCleanupPipeline()">Run Leave Cleanup Pipeline</button></div>
+      </div>
+      <div class="card">
+        <h3>Shift from Drive</h3>
+        <p style="color:var(--muted);font-size:14px;margin-top:0">Processes shift CSV/xlsx into wide tblShift.</p>
+        <div class="actions"><button class="btn warning" onclick="runShiftImport()">Process Drive Shift Files</button></div>
+      </div>
+      <p id="adminStatus" style="font-size:13px;color:#64748b"></p>
+    </section>
+  </main>
+</div>
+
+<div id="editModal" class="modal-backdrop"><div class="modal-card">
+  <h2>Edit Leave</h2>
+  <p>Code: <b id="editEntryCode"></b></p>
+  <div class="input-group"><label>Leave Type</label><select id="editLeaveType"></select></div>
+  <div class="grid-2">
+    <div class="input-group"><label>Start</label><input type="date" id="editStartDate"></div>
+    <div class="input-group"><label>End</label><input type="date" id="editEndDate"></div>
+  </div>
+  <div class="input-group"><label>Reason</label><textarea id="editLeaveReason" rows="3"></textarea></div>
+  <div class="actions">
+    <button class="btn" onclick="submitEdit()" id="saveEditBtn">Update</button>
+    <button class="btn danger" onclick="deleteEdit()" id="deleteEditBtn">Delete</button>
+    <button class="btn secondary" onclick="closeEditModal()">Cancel</button>
+  </div>
+</div></div>
+
+<div id="shiftEditModal" class="modal-backdrop"><div class="modal-card">
+  <h2>Edit Shift</h2><p>Date: <span id="shiftEditDate"></span></p>
+  <div class="input-group"><label>Code (blank=clear)</label><input id="shiftEditCode"></div>
+  <div class="actions"><button class="btn" onclick="saveShiftEdit()">Save</button><button class="btn secondary" onclick="closeShiftEdit()">Cancel</button></div>
+</div></div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+let currentUser=null,loadedEmployee=null,selectedBalanceMap={},employeeSearchTimer=null,shiftCalContext={};
+let empSuggestions=[],empSuggestIdx=-1,shiftSuggestions=[],shiftSuggestIdx=-1;
+let lastHistoryRows=[];
+
+function toast(msg,isErr){
+  const t=document.getElementById('toast');
+  t.className='toast '+(isErr?'error':'ok');
+  t.innerText=msg||'';
+  t.style.display='block';
+  clearTimeout(window._toastT);
+  window._toastT=setTimeout(()=>{t.style.display='none'},3500);
+}
+function showMessage(m,e){toast(m,!!e)}
+function escapeHtml(v){return String(v==null?'':v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+function toInputDate(v){
+  if(v==null||v==='')return '';
+  if(typeof v==='string'){
+    var m=v.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if(m)return m[1]+'-'+m[2]+'-'+m[3];
+    var mon=v.match(/(\d{1,2})-([A-Za-z]{3})-(\d{2,4})/);
+    if(mon){
+      var months={jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+      var mi=months[mon[2].toLowerCase()];
+      if(mi){var y=mon[3].length===2?(Number(mon[3])>=70?'19':'20')+mon[3]:mon[3];return y+'-'+mi+'-'+('0'+mon[1]).slice(-2)}
+    }
+  }
+  try{
+    var d=new Date(v);
+    if(!isNaN(d.getTime())){
+      if(d.getUTCHours()===0&&d.getUTCMinutes()===0&&d.getUTCSeconds()===0){
+        return d.getUTCFullYear()+'-'+('0'+(d.getUTCMonth()+1)).slice(-2)+'-'+('0'+d.getUTCDate()).slice(-2);
+      }
+      return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+    }
+  }catch(e){}
+  return '';
+}
+function toDateTimeLocal(v){
+  if(v==null||v==='')return '';
+  var d=new Date(v);if(isNaN(d.getTime()))return String(v);
+  return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+}
+function clearFieldErrors(){
+  document.querySelectorAll('.field-error').forEach(el=>el.classList.remove('field-error'));
+  const fe=document.getElementById('leaveFormError');if(fe){fe.style.display='none';fe.innerText=''}
+}
+function markError(id){const el=document.getElementById(id);if(el)el.classList.add('field-error')}
+
+function handleLoginKey(event){if(event.key==='Enter'){event.preventDefault();attemptLogin()}}
+function showResetPanel(){document.getElementById('resetPanel').style.display='block';document.getElementById('resetUserId').value=document.getElementById('userId').value.trim()}
+function loadSecurityQuestion(){
+  const uid=document.getElementById('resetUserId').value.trim(),msg=document.getElementById('resetMsg');
+  if(!uid){msg.innerText='Enter User ID';msg.style.display='block';return}
+  google.script.run.withSuccessHandler(r=>{
+    if(!r.success){msg.innerText=r.message;msg.style.display='block';return}
+    msg.style.display='none';document.getElementById('securityQuestionText').innerText=r.question;document.getElementById('questionBox').style.display='block';
+  }).getSecurityQuestion(uid);
+}
+function submitPasswordReset(){
+  const uid=document.getElementById('resetUserId').value.trim(),ans=document.getElementById('resetAnswer').value,msg=document.getElementById('resetMsg');
+  google.script.run.withSuccessHandler(r=>{msg.style.display='block';msg.style.color=r.success?'#16a34a':'#dc2626';msg.innerText=r.message}).resetPasswordWithAnswer(uid,ans);
+}
+function toggleSidebar(){document.querySelector(".sidebar").classList.toggle("collapsed")}
+function openAttendanceRecon(){window.open('https://script.google.com/macros/s/AKfycbw99U7_dCAYgKm2cB0BdpNa88qnAGvkNvBWeeP1VveugVMvWo7jc0UbvzXPVOuOlxho/exec','_blank')}
+function onReasonOptChange(){
+  const c=document.querySelector('input[name="leaveReasonOpt"]:checked');
+  const ta=document.getElementById('leaveReason');
+  if(!c)return;
+  if(c.value==='Custom'){ta.style.display='block';ta.focus()}else{ta.style.display='none';ta.value=''}
+}
+function getSelectedReason(){
+  const c=document.querySelector('input[name="leaveReasonOpt"]:checked');
+  if(!c)return '';
+  if(c.value==='Custom')return (document.getElementById('leaveReason').value||'').trim();
+  return c.value;
+}
+
+function loadReportFilters(){
+  google.script.run.withSuccessHandler(opt=>{
+    if(!opt)return;
+    fillChips('balBuChips',opt.bus||[]);
+    fillChips('balDeptChips',opt.departments||[]);
+  }).withFailureHandler(()=>{}).getFilterOptions();
+}
+function fillChips(containerId,arr){
+  const el=document.getElementById(containerId);
+  if(!el)return;
+  el.innerHTML=(arr||[]).map((v,i)=>'<label><input type="checkbox" value="'+escapeHtml(v)+'"> '+escapeHtml(v)+'</label>').join('');
+}
+function selectAllChips(containerId,on){
+  document.querySelectorAll('#'+containerId+' input[type=checkbox]').forEach(cb=>{cb.checked=!!on});
+}
+function getChipValues(containerId){
+  return Array.from(document.querySelectorAll('#'+containerId+' input[type=checkbox]:checked')).map(c=>c.value);
+}
+
+function attemptLogin(){
+  const userId=document.getElementById('userId').value.trim(),pass=document.getElementById('password').value;
+  const btn=document.getElementById('loginBtn'),err=document.getElementById('loginError');
+  if(!userId||!pass){err.innerText='Enter ID and password';err.style.display='block';return}
+  btn.disabled=true;btn.innerText='...';
+  google.script.run.withSuccessHandler(r=>{
+    btn.disabled=false;btn.innerText='Log In';
+    if(r.success){currentUser=r.user;loadDashboard()}else{err.innerText=r.message;err.style.display='block'}
+  }).withFailureHandler(e=>{btn.disabled=false;btn.innerText='Log In';err.innerText=e.message;err.style.display='block'}).loginUser(userId,pass);
+}
+function loadDashboard(){
+  document.getElementById('loginView').classList.remove('active');
+  document.getElementById('appView').classList.add('active');
+  document.getElementById('displayUserName').innerText=currentUser.name;
+  const a=currentUser.role==='admin';
+  document.getElementById('adminBadge').style.display=a?'inline-flex':'none';
+  document.getElementById('adminMenuBtn').style.display=a?'block':'none';
+  const n=new Date();
+  document.getElementById('shiftYear').value=n.getFullYear();
+  document.getElementById('shiftMonth').value=n.getMonth()+1;
+  google.script.run.preloadLeaveEntryData();
+  loadReportFilters();
+  // Default: show recent leave records until an employee is selected
+  fetchHistoryTable(null);
+}
+function logout(){currentUser=null;loadedEmployee=null;document.getElementById('appView').classList.remove('active');document.getElementById('loginView').classList.add('active')}
+function switchModule(el){
+  document.querySelectorAll('.menu-item').forEach(e=>e.classList.remove('active'));
+  el.classList.add('active');
+  document.querySelectorAll('.module').forEach(e=>e.classList.remove('active'));
+  document.getElementById(el.dataset.target).classList.add('active');
+}
+
+/* ---- Employee search: Enter = first match, Escape = close ---- */
+function handleEmployeeSearch(){
+  clearTimeout(employeeSearchTimer);
+  const q=document.getElementById('formEmpId').value.trim();
+  const p=document.getElementById('employeeSuggestions');
+  if(q.length<1){p.style.display='none';empSuggestions=[];return}
+  employeeSearchTimer=setTimeout(()=>{
+    google.script.run.withSuccessHandler(r=>{
+      empSuggestions=r||[];empSuggestIdx=empSuggestions.length?0:-1;
+      if(!empSuggestions.length){p.style.display='none';return}
+      renderEmpSuggestions();
+    }).searchEmployees(q,15);
+  },120);
+}
+function renderEmpSuggestions(){
+  const p=document.getElementById('employeeSuggestions');
+  p.innerHTML=empSuggestions.map((i,idx)=>'<div class="autocomplete-item'+(idx===empSuggestIdx?' active':'')+'" onclick="selectEmployee(\''+escapeHtml(i.id)+'\')"><b>'+escapeHtml(i.id)+'</b> — '+escapeHtml(i.name)+(i.department?' <span style="color:#64748b">('+escapeHtml(i.department)+')</span>':'')+'</div>').join('');
+  p.style.display='block';
+}
+function handleEmployeeKey(e){
+  const p=document.getElementById('employeeSuggestions');
+  if(e.key==='Escape'){p.style.display='none';empSuggestions=[];e.preventDefault();return}
+  if(e.key==='ArrowDown'&&empSuggestions.length){e.preventDefault();empSuggestIdx=Math.min(empSuggestIdx+1,empSuggestions.length-1);renderEmpSuggestions();return}
+  if(e.key==='ArrowUp'&&empSuggestions.length){e.preventDefault();empSuggestIdx=Math.max(empSuggestIdx-1,0);renderEmpSuggestions();return}
+  if(e.key==='Enter'){
+    e.preventDefault();
+    if(empSuggestions.length&&empSuggestIdx>=0){
+      selectEmployee(empSuggestions[empSuggestIdx].id);
+    }else{
+      fetchEmployeeDetails();
+    }
+  }
+}
+function selectEmployee(id){
+  document.getElementById('formEmpId').value=id;
+  document.getElementById('employeeSuggestions').style.display='none';
+  empSuggestions=[];
+  fetchEmployeeDetails();
+}
+
+function fetchEmployeeDetails(){
+  const raw=document.getElementById('formEmpId').value.trim();
+  if(!raw){toast('Enter Emp ID or Name',true);return}
+  // If looks like partial and suggestions open, use first
+  google.script.run.withSuccessHandler(data=>{
+    if(data.error){toast(data.error,true);return}
+    loadedEmployee=data.profile;
+    selectedBalanceMap={};
+    document.getElementById('employeeDisplay').style.display='block';
+    document.getElementById('profileSummary').innerHTML='<div class="profile-summary-hero"><span class="profile-pill"><b>'+escapeHtml(data.profile.id)+'</b></span><span class="profile-pill">'+escapeHtml(data.profile.name)+'</span><span class="profile-pill">'+escapeHtml(data.profile.dept)+'</span><span class="profile-pill">'+escapeHtml(data.profile.bu)+'</span><span class="profile-pill">'+escapeHtml(data.profile.category)+'</span></div>';
+    document.getElementById('formEmpId').value=data.profile.id;
+    renderBalances(data.balances||[],data.entitledTypes||[]);
+    fetchHistoryTable(data.profile.id);
+  }).withFailureHandler(e=>toast(e.message,true)).getEmployeeForForm(raw);
+}
+
+function renderBalances(balances,entitledTypes){
+  const select=document.getElementById('leaveTypeSelect');
+  let rows='';
+  const shown=balances.filter(b=>b.show!==false);
+  shown.forEach(b=>{
+    selectedBalanceMap[b.type]=b;
+    const bal=b.balance==='Unlimited'?'Unlimited':Number(b.balance||0).toFixed(2);
+    const d=b.detail||{};
+    rows+='<tr><td>'+escapeHtml(b.type)+'</td><td>'+escapeHtml(d.prevYearBalance!=null?d.prevYearBalance:'—')+'</td><td>'+escapeHtml(d.thisYearEntitlement!=null?d.thisYearEntitlement:b.entitlement)+'</td><td>'+escapeHtml(d.thisYearUtilized!=null?d.thisYearUtilized:b.utilized)+'</td><td><b>'+escapeHtml(bal)+'</b></td></tr>';
+  });
+  balances.forEach(b=>{selectedBalanceMap[b.type]=b});
+  let types=(entitledTypes&&entitledTypes.length?entitledTypes.slice():balances.map(b=>b.type));
+  types=types.filter((t,i,a)=>a.indexOf(t)===i);
+  types.sort((a,b)=>{
+    const aa=a.toLowerCase()==='annual leave'?0:1;
+    const bb=b.toLowerCase()==='annual leave'?0:1;
+    if(aa!==bb)return aa-bb;
+    return a.localeCompare(b);
+  });
+  select.innerHTML='';
+  types.forEach(t=>{
+    const b=selectedBalanceMap[t]||{balance:0,type:t};
+    const bal=b.balance==='Unlimited'?'Unlimited':Number(b.balance||0).toFixed(2);
+    select.innerHTML+='<option value="'+escapeHtml(t)+'">'+escapeHtml(t)+' (Bal: '+escapeHtml(bal)+')</option>';
+  });
+  if(types.length)select.value=types.find(t=>t.toLowerCase()==='annual leave')||types[0];
+  document.getElementById('balanceTable').innerHTML='<table><thead><tr><th>Type</th><th>Prev Yr</th><th>This Yr Ent</th><th>Util This Yr</th><th>Balance</th></tr></thead><tbody>'+(rows||'<tr><td colspan=5>None</td></tr>')+'</tbody></table>';
+  // Also fill edit leave type dropdown
+  const editSel=document.getElementById('editLeaveType');
+  if(editSel){
+    editSel.innerHTML=types.map(t=>'<option value="'+escapeHtml(t)+'">'+escapeHtml(t)+'</option>').join('');
+  }
+}
+
+function submitLeave(){
+  clearFieldErrors();
+  const leaveType=document.getElementById('leaveTypeSelect').value;
+  const startDate=document.getElementById('startDate').value;
+  const endDate=document.getElementById('endDate').value;
+  const leaveReason=getSelectedReason();
+  const err=document.getElementById('leaveFormError');
+  let missing=[];
+  if(!loadedEmployee){missing.push('employee');toast('Load an employee first',true);return}
+  if(!leaveType){missing.push('Leave Type');markError('leaveTypeSelect')}
+  if(!startDate){missing.push('Start Date');markError('startDate')}
+  if(!endDate){missing.push('End Date');markError('endDate')}
+  if(!leaveReason){missing.push('Leave Reason');markError('leaveReason')}
+  if(missing.length){
+    err.innerText='Complete all fields: '+missing.join(', ');
+    err.style.display='block';
+    return;
+  }
+  if(new Date(endDate)<new Date(startDate)){
+    err.innerText='End date cannot be before start date';
+    err.style.display='block';
+    markError('endDate');
+    return;
+  }
+  const bal=selectedBalanceMap[leaveType]||{};
+  document.getElementById('lastEntryCode').innerText='';
+  const btn=document.getElementById('submitLeaveBtn');
+  btn.disabled=true;btn.innerText='…';
+  google.script.run.withSuccessHandler(r=>{
+    btn.disabled=false;btn.innerText='Submit Request';
+    toast(r.message,!r.success);
+    if(r.success){
+      document.getElementById('startDate').value='';
+      document.getElementById('endDate').value='';
+      document.getElementById('leaveReason').value='';
+      const m=(r.message||'').match(/([A-Z]{1,4}-\d+)/);
+      if(m)document.getElementById('lastEntryCode').innerText='Last entry: '+m[1];
+      fetchEmployeeDetails();
+    }
+  }).withFailureHandler(e=>{
+    btn.disabled=false;btn.innerText='Submit Request';
+    toast(e.message,true);
+  }).submitLeaveRequest({
+    empId:loadedEmployee.id,empName:loadedEmployee.name,dept:loadedEmployee.dept,
+    category:loadedEmployee.category,bu:loadedEmployee.bu,leaveType,startDate,endDate,leaveReason,
+    availableBalance:bal.balance==='Unlimited'?999999:Number(bal.balance||0)
+  },currentUser);
+}
+
+function fetchHistoryTable(empId){
+  const tbody=document.getElementById('historyTableBody');
+  tbody.innerHTML='<tr><td>Loading…</td></tr>';
+  const handler=function(h){
+    lastHistoryRows=h||[];
+    if(!h||!h.length){tbody.innerHTML='<tr><td>No records</td></tr>';return}
+    tbody.innerHTML='<tr><th>Entry Code</th><th>Emp ID</th><th>Name</th><th>Start</th><th>End</th><th>Days</th><th>Leave Year</th><th>Type</th><th></th></tr>'+
+      h.map(r=>{
+        const s=toInputDate(r.startDate),e=toInputDate(r.endDate);
+        const reason=escapeHtml(r.reason||'').replace(/`/g,'&#96;');
+        const type=escapeHtml(r.type||'');
+        return '<tr><td><b>'+escapeHtml(r.entryCode||'')+'</b></td><td>'+escapeHtml(r.empId)+'</td><td>'+escapeHtml(r.empName)+'</td><td>'+s+'</td><td>'+e+'</td><td>'+escapeHtml(r.noOfDays)+'</td><td>'+escapeHtml(r.entitlementYear)+'</td><td>'+type+'</td><td><button class="btn ghost" onclick="openEditModal(`'+escapeHtml(r.entryCode)+'`,`'+s+'`,`'+e+'`,`'+reason+'`,`'+type+'`)">Edit</button></td></tr>';
+      }).join('');
+  };
+  if(empId){
+    google.script.run.withSuccessHandler(handler).withFailureHandler(e=>{tbody.innerHTML='<tr><td>'+escapeHtml(e.message)+'</td></tr>'}).getEmployeeLeaveHistory(empId);
+  }else{
+    google.script.run.withSuccessHandler(handler).withFailureHandler(e=>{tbody.innerHTML='<tr><td>'+escapeHtml(e.message)+'</td></tr>'}).getRecentLeaveRecords(50);
+  }
+}
+
+function exportHistoryCsv(){
+  const empId=loadedEmployee?loadedEmployee.id:'';
+  google.script.run.withSuccessHandler(c=>{
+    if(!c){toast('No data',true);return}
+    downloadCsv(empId?('Leave_'+empId+'.csv'):'Leave_Recent.csv',c);
+  }).withFailureHandler(e=>toast(e.message,true)).buildEmployeeLeaveHistoryCsv(empId||'');
+}
+
+function openEditModal(c,s,e,r,type){
+  document.getElementById('editEntryCode').innerText=c;
+  document.getElementById('editStartDate').value=s;
+  document.getElementById('editEndDate').value=e;
+  document.getElementById('editLeaveReason').value=r;
+  const sel=document.getElementById('editLeaveType');
+  if(type&&sel){
+    // ensure option exists
+    let found=false;
+    for(let i=0;i<sel.options.length;i++){if(sel.options[i].value===type){found=true;break}}
+    if(!found&&type){sel.innerHTML+='<option value="'+escapeHtml(type)+'">'+escapeHtml(type)+'</option>'}
+    sel.value=type;
+  }
+  document.getElementById('editModal').style.display='flex';
+}
+function closeEditModal(){document.getElementById('editModal').style.display='none'}
+function submitEdit(){
+  const code=document.getElementById('editEntryCode').innerText;
+  const start=document.getElementById('editStartDate').value;
+  const end=document.getElementById('editEndDate').value;
+  const reason=document.getElementById('editLeaveReason').value;
+  const leaveType=document.getElementById('editLeaveType').value;
+  const btn=document.getElementById('saveEditBtn');
+  btn.disabled=true;
+  google.script.run.withSuccessHandler(r=>{
+    btn.disabled=false;
+    toast(r.message,!r.success);
+    if(r.success){closeEditModal();if(loadedEmployee)fetchEmployeeDetails();else fetchHistoryTable(null)}
+  }).withFailureHandler(e=>{btn.disabled=false;toast(e.message,true)}).updateLeaveRecord({
+    entryCode:code,empId:loadedEmployee?loadedEmployee.id:'',startDate:start,endDate:end,leaveReason:reason,leaveType:leaveType
+  },currentUser);
+}
+function deleteEdit(){
+  const code=document.getElementById('editEntryCode').innerText;
+  if(!confirm('Delete leave record '+code+'? This cannot be undone.'))return;
+  const btn=document.getElementById('deleteEditBtn');
+  btn.disabled=true;
+  google.script.run.withSuccessHandler(r=>{
+    btn.disabled=false;
+    toast(r.message,!r.success);
+    if(r.success){closeEditModal();if(loadedEmployee)fetchEmployeeDetails();else fetchHistoryTable(null)}
+  }).withFailureHandler(e=>{btn.disabled=false;toast(e.message,true)}).deleteLeaveRecord(code,currentUser);
+}
+
+
+function downloadEntitlementBalance(){
+  const st=document.getElementById('balStatus');
+  st.innerText='Building export…';
+  const bu=(typeof getChipValues==='function'?getChipValues('balBuChips'):[]).join('|')||null;
+  const dept=(typeof getChipValues==='function'?getChipValues('balDeptChips'):[]).join('|')||null;
+  google.script.run.withSuccessHandler(r=>{
+    if(r&&r.csv){downloadCsv(r.fileName||'Entitlement_Balance.csv',r.csv);st.innerText='Downloaded.';toast('Export ready')}
+    else if(typeof r==='string'&&r.length>5){downloadCsv('Entitlement_Balance.csv',r);st.innerText='Downloaded.';toast('Export ready')}
+    else{st.innerText=(r&&r.message)||'No data';toast((r&&r.message)||'No data',true)}
+  }).withFailureHandler(e=>{st.innerText=e.message;toast(e.message,true)}).exportEntitlementAndBalance(bu,dept);
+}
+function runRefreshEmployeeBalances(){
+  const st=document.getElementById('balStatus')||document.getElementById('adminStatus');
+  if(st)st.innerText='Refreshing balances…';
+  google.script.run.withSuccessHandler(r=>{
+    if(st)st.innerText=r.message||'Done';
+    toast(r.message||'Done',!(r&&r.success!==false));
+  }).withFailureHandler(e=>{if(st)st.innerText=e.message;toast(e.message,true)}).refreshEmployeeLeaveBalances();
+}
+function runLeaveCleanupPipeline(){
+  if(!confirm('Run leave cleanup pipeline (dedupe, overlaps, recalculate)? This can take several minutes.'))return;
+  const st=document.getElementById('adminStatus');
+  if(st)st.innerText='Cleanup running…';
+  toast('Cleanup started…');
+  google.script.run.withSuccessHandler(r=>{
+    if(st)st.innerText=(r&&r.message)||'Done';
+    toast((r&&r.message)||'Done',!(r&&r.success!==false));
+  }).withFailureHandler(e=>{if(st)st.innerText=e.message;toast(e.message,true)}).runLeaveCleanupPipeline();
+}
+
+function downloadCsv(n,c){
+  const b=new Blob([c],{type:'text/csv;charset=utf-8;'});
+  const u=URL.createObjectURL(b);
+  const a=document.createElement('a');
+  a.href=u;a.download=n;document.body.appendChild(a);a.click();
+  document.body.removeChild(a);URL.revokeObjectURL(u);
+}
+function downloadBalanceReport(){
+  const st=document.getElementById('balStatus');
+  const btn=document.getElementById('balCsvBtn');
+  st.innerText='Building CSV…';
+  btn.disabled=true;
+  const bu=getChipValues('balBuChips').join('|')||null;
+  const dept=getChipValues('balDeptChips').join('|')||null;
+  google.script.run.withSuccessHandler(c=>{
+    btn.disabled=false;
+    if(!c||c.length<5){st.innerText='No data returned.';toast('Empty CSV',true);return}
+    downloadCsv('Balance_Report.csv',c);
+    st.innerText='Downloaded.';
+    toast('Balance CSV downloaded');
+  }).withFailureHandler(e=>{
+    btn.disabled=false;st.innerText=e.message;toast(e.message,true);
+  }).buildBalanceReportCsv(bu,dept);
+}
+function downloadAnnualCasualBalances(){
+  const st=document.getElementById('balStatus');st.innerText='Building…';
+  google.script.run.withSuccessHandler(r=>{st.innerText=r.message||'Done';toast(r.message||'Done',!r.success)}).exportAnnualCasualBalances();
+}
+function runUpdateAllBalances(){
+  const st=document.getElementById('balStatus');st.innerText='Updating…';
+  google.script.run.withSuccessHandler(r=>{st.innerText=r.message||'Done';toast(r.message||'Done',!r.success)}).updateAllEmployeeLeaveBalances();
+}
+
+let lastRangeRows=[];
+function runLeaveRangeFilter(){
+  const from=document.getElementById('rangeFrom').value,to=document.getElementById('rangeTo').value;
+  const st=document.getElementById('rangeStatus'),btn=document.getElementById('rangeLoadBtn');
+  if(!from||!to){st.innerText='Enter From and To.';return}
+  btn.disabled=true;st.innerText='Loading…';
+  google.script.run.withSuccessHandler(res=>{
+    btn.disabled=false;st.innerText=res.message||'';
+    lastRangeRows=res.rows||[];
+    const t=document.getElementById('leaveRecordsBody');
+    if(!res.rows||!res.rows.length){t.innerHTML='<tr><td>None</td></tr>';return}
+    t.innerHTML='<tr><th>Code</th><th>Emp</th><th>Name</th><th>Dept</th><th>Cat</th><th>Type</th><th>Start</th><th>End</th><th>Reason</th><th>Days</th><th>Util</th><th>Year</th><th>Entered</th><th>By</th></tr>'+
+      res.rows.map(r=>'<tr><td>'+escapeHtml(r.entryCode)+'</td><td>'+escapeHtml(r.empId)+'</td><td>'+escapeHtml(r.empName)+'</td><td>'+escapeHtml(r.department)+'</td><td>'+escapeHtml(r.category)+'</td><td>'+escapeHtml(r.leaveType)+'</td><td>'+toInputDate(r.startDate)+'</td><td>'+toInputDate(r.endDate)+'</td><td>'+escapeHtml(r.leaveReason)+'</td><td>'+escapeHtml(r.noOfDays)+'</td><td>'+escapeHtml(r.leaveUtilized)+'</td><td>'+escapeHtml(r.entitlementYear)+'</td><td>'+toDateTimeLocal(r.dateEntered)+'</td><td>'+escapeHtml(r.enteredBy)+'</td></tr>').join('');
+  }).withFailureHandler(e=>{btn.disabled=false;st.innerText=e.message}).getLeaveRecordsByDateRange(from,to);
+}
+function downloadLeaveRangeCsv(){
+  const from=document.getElementById('rangeFrom').value,to=document.getElementById('rangeTo').value;
+  if(!from||!to){toast('Enter From and To dates',true);return}
+  const btn=document.getElementById('rangeCsvBtn');
+  btn.disabled=true;
+  google.script.run.withSuccessHandler(c=>{
+    btn.disabled=false;
+    if(!c){toast('No data',true);return}
+    downloadCsv('Leave_Records_'+from+'_'+to+'.csv',c);
+    toast('CSV downloaded');
+  }).withFailureHandler(e=>{btn.disabled=false;toast(e.message,true)}).buildLeaveRecordsRangeCsv(from,to);
+}
+
+function handleShiftEmpSearch(){
+  clearTimeout(window._shiftSearchT);
+  const q=document.getElementById('shiftEmpId').value.trim(),p=document.getElementById('shiftEmpSuggestions');
+  if(!p)return;
+  if(q.length<1){p.style.display='none';shiftSuggestions=[];return}
+  window._shiftSearchT=setTimeout(()=>{
+    google.script.run.withSuccessHandler(r=>{
+      shiftSuggestions=r||[];shiftSuggestIdx=shiftSuggestions.length?0:-1;
+      if(!shiftSuggestions.length){p.style.display='none';return}
+      p.innerHTML=shiftSuggestions.map((i,idx)=>'<div class="autocomplete-item'+(idx===shiftSuggestIdx?' active':'')+'" onclick="selectShiftEmp(\''+escapeHtml(i.id)+'\')"><b>'+escapeHtml(i.id)+'</b> — '+escapeHtml(i.name)+'</div>').join('');
+      p.style.display='block';
+    }).searchEmployees(q,12);
+  },120);
+}
+function handleShiftEmpKey(e){
+  const p=document.getElementById('shiftEmpSuggestions');
+  if(e.key==='Escape'){p.style.display='none';shiftSuggestions=[];e.preventDefault();return}
+  if(e.key==='Enter'){
+    e.preventDefault();
+    if(shiftSuggestions.length&&shiftSuggestIdx>=0)selectShiftEmp(shiftSuggestions[shiftSuggestIdx].id);
+  }
+}
+function selectShiftEmp(id){document.getElementById('shiftEmpId').value=id;document.getElementById('shiftEmpSuggestions').style.display='none';shiftSuggestions=[]}
+
+function loadShiftCalendar(){
+  const empId=document.getElementById('shiftEmpId').value.trim();
+  const year=+document.getElementById('shiftYear').value,month=+document.getElementById('shiftMonth').value;
+  if(!empId){toast('Emp ID required',true);return}
+  google.script.run.withSuccessHandler(res=>{
+    if(res.error){toast(res.error,true);return}
+    shiftCalContext={empId:res.empId,year:res.year,month:res.month};
+    const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    document.getElementById('shiftCalTitle').innerText=res.empId+' — '+mn[res.month-1]+' '+res.year;
+    document.getElementById('shiftCalHead').innerHTML=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(h=>'<div class="cal-head">'+h+'</div>').join('');
+    const fd=res.days[0]?res.days[0].dayOfWeek:0;
+    let html='';
+    for(let i=0;i<fd;i++)html+='<div class="cal-cell empty"></div>';
+    res.days.forEach(d=>{
+      const hasL=d.leaves&&d.leaves.length;
+      const leaveTxt=hasL?d.leaves.join(', '):'';
+      html+='<div class="cal-cell'+(hasL?' has-leave':'')+'" onclick="openShiftEdit(\''+d.date+'\',\''+escapeHtml(d.shift)+'\')"><div class="cal-daynum">'+d.day+'</div><div class="cal-shift">'+escapeHtml(d.shift||'—')+'</div>'+(hasL?'<div class="cal-leave">'+escapeHtml(leaveTxt)+'</div>':'')+'</div>';
+    });
+    document.getElementById('shiftCalBody').innerHTML=html;
+  }).getShiftCalendar(empId,year,month);
+}
+function openShiftEdit(d,c){document.getElementById('shiftEditDate').innerText=d;document.getElementById('shiftEditCode').value=c==='—'?'':c;document.getElementById('shiftEditModal').style.display='flex'}
+function closeShiftEdit(){document.getElementById('shiftEditModal').style.display='none'}
+function saveShiftEdit(){
+  const d=document.getElementById('shiftEditDate').innerText,c=document.getElementById('shiftEditCode').value.trim();
+  google.script.run.withSuccessHandler(r=>{toast(r.message,!r.success);if(r.success){closeShiftEdit();loadShiftCalendar()}}).updateShiftCode(shiftCalContext.empId,d,c,currentUser);
+}
+function runShiftImport(){
+  toast('Processing Drive shift files…');
+  google.script.run.withSuccessHandler(r=>toast(r&&r.message||'Done',!(r&&r.success!==false))).withFailureHandler(e=>toast(e.message,true)).processShiftFiles();
+}
+function downloadDarwinBoxExport(){google.script.run.withSuccessHandler(r=>{if(!r.success)return toast(r.message,true);downloadCsv(r.fileName,r.csv)}).buildDarwinBoxExportCsv()}
+function runDarwinBoxImport(){google.script.run.withSuccessHandler(r=>toast(r&&r.message||'Done')).importDarwinBoxLeaves()}
+function runEmployeeSync(){const st=document.getElementById('adminStatus');if(st)st.innerText='Syncing…';google.script.run.withSuccessHandler(r=>{if(st)st.innerText=r.message||'Done';toast(r.message||'OK')}).syncEmployeeListFromCsv()}
+function runExcelLeaveImport(){const st=document.getElementById('adminStatus');if(st)st.innerText='Importing…';google.script.run.withSuccessHandler(r=>{if(st)st.innerText=r.message||'Done';toast(r.message||'OK')}).importExcelLeaveEntries()}
+function runRecalculateLeaveUtilized(){
+  if(!confirm('Recalculate Leave Utilized for ALL rows in tblLeave?'))return;
+  const btn=document.getElementById('recalcBtn'),st=document.getElementById('recalcStatus');
+  btn.disabled=true;btn.innerText='Recalculating…';st.innerText='Running…';
+  google.script.run.withSuccessHandler(r=>{
+    btn.disabled=false;btn.innerText='Recalculate all Leave Utilized';
+    st.innerText=r&&r.message?r.message:'Done';
+    toast(r&&r.message?r.message:'Done',!(r&&r.success));
+  }).withFailureHandler(e=>{btn.disabled=false;btn.innerText='Recalculate all Leave Utilized';st.innerText=e.message;toast(e.message,true)}).calculateLeaveUtilized();
+}
+</script>
 </body>
 </html>
