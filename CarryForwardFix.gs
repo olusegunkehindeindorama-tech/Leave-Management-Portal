@@ -4,6 +4,8 @@
  *  - Leaves fully within CF deadline get Entitlement Year = previous year
  *  - While StartingBal "{prev} Balance" remains (consumed chronologically)
  *  - After deadline or when prev balance is exhausted → current year
+ *  - Start/End are NOT rewritten on normal recalculate (prevents WAT day-back shift).
+ *    Dates are only written for merge/split, via toSheetDateValue_ (noon) + dd-mmm-yyyy.
  */
 
 /**
@@ -11,11 +13,9 @@
  *
  * - Entirely AFTER deadline → entitlementYear = calendar year of start
  * - Entirely ON/BEFORE deadline → entitlementYear = previous calendar year
- *   (charged against StartingBal "{prev} Balance" while that pool lasts —
- *    sequential balance application is done in calculateLeaveUtilized)
  * - Spans deadline → two segments: pre → prev year, post → current year
  */
-splitLeaveByCarryForward_ = function(startDate, endDate, leaveType, pol) {
+splitLeaveByCarryForward_ = function (startDate, endDate, leaveType, pol) {
   var meta = policyCalcMeta_(pol);
   var s = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
   var e = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate());
@@ -34,28 +34,24 @@ splitLeaveByCarryForward_ = function(startDate, endDate, leaveType, pol) {
     return segments;
   }
 
-  // Entirely after carry-forward deadline → current year only
   if (s.getTime() > deadline.getTime()) {
     segments.push({ start: s, end: e, entitlementYear: calYear });
     return segments;
   }
 
-  // Entirely on or before deadline → previous entitlement year
   if (e.getTime() <= deadline.getTime()) {
     segments.push({ start: s, end: e, entitlementYear: prevYear });
     return segments;
   }
 
-  // Spans deadline: pre-deadline → prev year; post → current year
   var preEnd = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate());
   var postStart = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate() + 1);
-
   segments.push({ start: s, end: preEnd, entitlementYear: prevYear });
   segments.push({ start: postStart, end: e, entitlementYear: postStart.getFullYear() });
   return segments;
 };
 
-calculateLeaveUtilized = function() {
+calculateLeaveUtilized = function () {
   var started = new Date().getTime();
   var master = loadEntitlementMasterData_();
   if (!master.sheet.leave) {
@@ -87,6 +83,7 @@ calculateLeaveUtilized = function() {
     }
     base['Start Date'] = g.start;
     base['End Date'] = g.end;
+    base._touchDates = true;
     if (entryIdx >= 0) {
       base['Entry Code'] = String(base['Entry Code'] || '').replace(/-S[12]$/, '');
     }
@@ -112,7 +109,6 @@ calculateLeaveUtilized = function() {
   var splitCount = 0;
   var mergeCount = mergeGroups.length;
 
-  // Sort by emp, start date so prev-year StartingBal is consumed in chronological order
   working.sort(function (a, b) {
     var ae = String(a['Emp ID'] || '').toUpperCase();
     var be = String(b['Emp ID'] || '').toUpperCase();
@@ -123,7 +119,6 @@ calculateLeaveUtilized = function() {
     return (a._row || 0) - (b._row || 0);
   });
 
-  // Remaining previous-year balance per employee (from StartingBal "{year} Balance")
   var remainingPrevByEmp = {};
   function getRemainingPrev_(empId, calYear) {
     var key = empId + '|' + calYear;
@@ -141,7 +136,6 @@ calculateLeaveUtilized = function() {
     remainingPrevByEmp[empId + '|' + calYear] = Math.max(0, val);
   }
 
-  /** Does this leave type draw from Annual / StartingBal CF pool? */
   function drawsFromAnnualPool_(emp, lt, pol) {
     if (String(lt || '').trim() === 'Annual Leave') return true;
     var meta = policyCalcMeta_(pol);
@@ -170,15 +164,13 @@ calculateLeaveUtilized = function() {
     var usesAnnualPool = drawsFromAnnualPool_(emp, lt, pol);
     var calYear = s.getFullYear();
 
-    // Apply sequential StartingBal: if prev-year label but no remaining balance → current year
     function applyBalanceYear_(seg) {
       var year = seg.entitlementYear;
       if (!usesAnnualPool) return year;
-      if (year >= calYear) return year; // already current (or later)
-      // year is previous — only keep if StartingBal remaining > 0
+      if (year >= calYear) return year;
       var rem = getRemainingPrev_(empId, calYear);
       if (rem > 0) return year;
-      return calYear; // prev balance exhausted → charge current year
+      return calYear;
     }
 
     if (segments.length === 1) {
@@ -186,45 +178,37 @@ calculateLeaveUtilized = function() {
       var days = Math.round((segments[0].end - segments[0].start) / 86400000) + 1;
       var year1 = applyBalanceYear_(segments[0]);
 
-      // If labeled prev year but util exceeds remaining prev bal, split across years
       if (usesAnnualPool && year1 === calYear - 1) {
         var rem = getRemainingPrev_(empId, calYear);
         if (util > rem && rem > 0) {
-          // Partial: rem days to prev year, rest to current — approximate by util split
           var utilPrev = rem;
           var utilCurr = util - rem;
           setRemainingPrev_(empId, calYear, 0);
           splitCount++;
           var baseCode = String(lv['Entry Code'] || 'LV').replace(/-S[12]$/, '');
-          // Keep original row as prev-year portion (same dates, reduced util is imperfect
-          // but entitlement year is what user needs; keep full date span on first row
-          // with prev year only for the portion that fits — prefer date split when possible.
-          // Practical approach: first row keeps full dates + year=prev only if rem covers all;
-          // here rem < util so assign year=prev for first and append current year row is messy
-          // without date split. Assign whole leave to prev until rem=0 then current:
-          // When util > rem: still put entitlement year = prev for this leave only if we
-          // allow overdraw of display year — better: year = prev when rem>0 for the leave
-          // that starts consuming, and mark remaining util as current on a second logical year.
           updates.push({
             row: lv._row,
             start: segments[0].start,
             end: segments[0].end,
-            util: util,
+            util: utilPrev,
             days: days,
             year: calYear - 1,
+            touchDates: !!lv._touchDates,
             entryCode: lv['Entry Code']
           });
-          // Consume all remaining prev; excess counts against current year in balance engine
-          // via Entitlement Year = prev (full util still on prev year row). For balance math,
-          // Leave balance.gs charges by entitlement year. So split util across two rows.
-          updates[updates.length - 1].util = utilPrev;
           var newRow = buildBlankLeaveRow_(headers);
           for (var c = 0; c < headers.length; c++) {
             newRow[c] = lv[headers[c]] !== undefined ? lv[headers[c]] : '';
           }
           if (entryIdx >= 0) newRow[entryIdx] = baseCode + '-CY';
-          if (startIdx >= 0) newRow[startIdx] = segments[0].start;
-          if (endIdx >= 0) newRow[endIdx] = segments[0].end;
+          if (startIdx >= 0) {
+            newRow[startIdx] = (typeof toSheetDateValue_ === 'function')
+              ? toSheetDateValue_(segments[0].start) : segments[0].start;
+          }
+          if (endIdx >= 0) {
+            newRow[endIdx] = (typeof toSheetDateValue_ === 'function')
+              ? toSheetDateValue_(segments[0].end) : segments[0].end;
+          }
           if (utilIdx >= 0) newRow[utilIdx] = utilCurr;
           if (daysIdx >= 0) newRow[daysIdx] = days;
           if (yearIdx >= 0) newRow[yearIdx] = calYear;
@@ -245,13 +229,14 @@ calculateLeaveUtilized = function() {
         util: util,
         days: days,
         year: year1,
+        touchDates: !!lv._touchDates,
         entryCode: lv['Entry Code']
       });
     } else {
       splitCount++;
       var u0 = calculateLeaveUtilizeWithMaster_(master, empId, segments[0].start, segments[0].end, lt);
       var d0 = Math.round((segments[0].end - segments[0].start) / 86400000) + 1;
-      var baseCode = String(lv['Entry Code'] || 'LV').replace(/-S[12]$/, '');
+      var baseCode2 = String(lv['Entry Code'] || 'LV').replace(/-S[12]$/, '');
       var y0 = applyBalanceYear_(segments[0]);
       if (usesAnnualPool && y0 === calYear - 1) {
         var rem0 = getRemainingPrev_(empId, calYear);
@@ -265,30 +250,47 @@ calculateLeaveUtilized = function() {
         util: u0,
         days: d0,
         year: y0,
-        entryCode: baseCode + '-S1'
+        touchDates: true,
+        entryCode: baseCode2 + '-S1'
       });
 
       var u1 = calculateLeaveUtilizeWithMaster_(master, empId, segments[1].start, segments[1].end, lt);
       var d1 = Math.round((segments[1].end - segments[1].start) / 86400000) + 1;
-      var y1 = segments[1].entitlementYear; // post-deadline = current year
-      var newRow = buildBlankLeaveRow_(headers);
+      var y1 = segments[1].entitlementYear;
+      var newRow2 = buildBlankLeaveRow_(headers);
       for (var c2 = 0; c2 < headers.length; c2++) {
-        newRow[c2] = lv[headers[c2]] !== undefined ? lv[headers[c2]] : '';
+        newRow2[c2] = lv[headers[c2]] !== undefined ? lv[headers[c2]] : '';
       }
-      if (entryIdx >= 0) newRow[entryIdx] = baseCode + '-S2';
-      if (startIdx >= 0) newRow[startIdx] = segments[1].start;
-      if (endIdx >= 0) newRow[endIdx] = segments[1].end;
-      if (utilIdx >= 0) newRow[utilIdx] = u1;
-      if (daysIdx >= 0) newRow[daysIdx] = d1;
-      if (yearIdx >= 0) newRow[yearIdx] = y1;
-      appends.push(newRow);
+      if (entryIdx >= 0) newRow2[entryIdx] = baseCode2 + '-S2';
+      if (startIdx >= 0) {
+        newRow2[startIdx] = (typeof toSheetDateValue_ === 'function')
+          ? toSheetDateValue_(segments[1].start) : segments[1].start;
+      }
+      if (endIdx >= 0) {
+        newRow2[endIdx] = (typeof toSheetDateValue_ === 'function')
+          ? toSheetDateValue_(segments[1].end) : segments[1].end;
+      }
+      if (utilIdx >= 0) newRow2[utilIdx] = u1;
+      if (daysIdx >= 0) newRow2[daysIdx] = d1;
+      if (yearIdx >= 0) newRow2[yearIdx] = y1;
+      appends.push(newRow2);
     }
   });
 
   var leaveSheet = master.sheet.leave;
   updates.forEach(function (u) {
-    if (startIdx >= 0) leaveSheet.getRange(u.row, startIdx + 1).setValue(u.start);
-    if (endIdx >= 0) leaveSheet.getRange(u.row, endIdx + 1).setValue(u.end);
+    // Do NOT rewrite Start/End unless the row was split/merged (touchDates).
+    // Writing midnight Date objects shifts the calendar day in WAT (UTC+1).
+    if (u.touchDates) {
+      if (startIdx >= 0 && u.start) {
+        var sv = (typeof toSheetDateValue_ === 'function') ? toSheetDateValue_(u.start) : u.start;
+        leaveSheet.getRange(u.row, startIdx + 1).setValue(sv).setNumberFormat('dd-mmm-yyyy');
+      }
+      if (endIdx >= 0 && u.end) {
+        var ev = (typeof toSheetDateValue_ === 'function') ? toSheetDateValue_(u.end) : u.end;
+        leaveSheet.getRange(u.row, endIdx + 1).setValue(ev).setNumberFormat('dd-mmm-yyyy');
+      }
+    }
     if (utilIdx >= 0) leaveSheet.getRange(u.row, utilIdx + 1).setValue(u.util);
     if (daysIdx >= 0) leaveSheet.getRange(u.row, daysIdx + 1).setValue(u.days);
     if (yearIdx >= 0) leaveSheet.getRange(u.row, yearIdx + 1).setValue(u.year);
@@ -327,7 +329,6 @@ calculateLeaveUtilized = function() {
     elapsedMs: ms
   };
 };
-
 
 recalculateAllLeaveUtilized = function () {
   return calculateLeaveUtilized();
