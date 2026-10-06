@@ -8,13 +8,6 @@
  *    Dates are only written for merge/split, via toSheetDateValue_ (noon) + dd-mmm-yyyy.
  */
 
-/**
- * Split / label leave by carry-forward deadline.
- *
- * - Entirely AFTER deadline → entitlementYear = calendar year of start
- * - Entirely ON/BEFORE deadline → entitlementYear = previous calendar year
- * - Spans deadline → two segments: pre → prev year, post → current year
- */
 splitLeaveByCarryForward_ = function (startDate, endDate, leaveType, pol) {
   var meta = policyCalcMeta_(pol);
   var s = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
@@ -52,6 +45,7 @@ splitLeaveByCarryForward_ = function (startDate, endDate, leaveType, pol) {
 };
 
 calculateLeaveUtilized = function () {
+  Logger.log('=== RECALC START (calculateLeaveUtilized) ===');
   var started = new Date().getTime();
   var master = loadEntitlementMasterData_();
   if (!master.sheet.leave) {
@@ -279,9 +273,8 @@ calculateLeaveUtilized = function () {
 
   var leaveSheet = master.sheet.leave;
   updates.forEach(function (u) {
-    // Do NOT rewrite Start/End unless the row was split/merged (touchDates).
-    // Writing midnight Date objects shifts the calendar day in WAT (UTC+1).
     if (u.touchDates) {
+      Logger.log('RECALC writing dates row ' + u.row + ' (merge/split only)');
       if (startIdx >= 0 && u.start) {
         var sv = (typeof toSheetDateValue_ === 'function') ? toSheetDateValue_(u.start) : u.start;
         leaveSheet.getRange(u.row, startIdx + 1).setValue(sv).setNumberFormat('dd-mmm-yyyy');
@@ -318,6 +311,7 @@ calculateLeaveUtilized = function () {
   var msg = 'Recalculated ' + updates.length + ' leave(s), merged ' + mergeCount +
     ' wrong split group(s), created ' + splitCount + ' carry-forward split(s), ' +
     'appended ' + appends.length + ' row(s) in ' + ms + ' ms.';
+  Logger.log('=== RECALC END === ' + msg);
   Logger.log(msg);
   return {
     success: true,
