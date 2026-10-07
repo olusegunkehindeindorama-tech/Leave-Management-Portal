@@ -3,27 +3,13 @@
  *  SHIFT SYNC — wide (pivoted) tblShift
  * ============================================================
  *  Layout:
- *    Row 1: Emp ID | yyyy-MM-dd | yyyy-MM-dd | ...
+ *    Row 1: Emp ID | yyyy-MM-dd | yyyy-MM-dd | ...  (TEXT, never Date serials)
  *    Row 2+: empId | shift      | shift      | ...
  *
- *  Every run (manual or trigger) does ALL of the following in memory:
- *
- *  A. RETENTION (columns)
- *     Keep from the 1st of the current month, 12 months ago.
- *     e.g. today Aug 2026 → keep from 2025-08-01 (drop through 2025-07-31).
- *     Date columns older than the cutoff are never written back.
- *
- *  B. CSV RANGE REPLACE (columns)
- *     Dates in [csvMin, csvMax] are removed from the existing grid, then
- *     the CSV is unpivoted and written as those date columns again.
- *     Employees are matched by Emp ID.
- *
- *  C. EMPTY EMPLOYEE ROWS
- *     After A + B, any employee with zero remaining shift cells is dropped.
- *
- *  D. WRITE
- *     Sheet is recreated (avoids ghost 300k rows / cell-limit errors),
- *     then the compact wide matrix is written in one pass.
+ *  Date handling:
+ *    CSV dates are ISO (2026-07-01T00:00:00) → stored as "2026-07-01" text.
+ *    Headers are written as plain text (format @) so Sheets cannot
+ *    reinterpret them as MM/DD vs DD/MM locale dates.
  * ============================================================
  */
 
@@ -38,17 +24,17 @@ function processShiftFiles() {
 function syncShiftsFromCsv() {
   var started = new Date().getTime();
   var cutoffStr = ymd_(shiftRetentionCutoff_());
+  Logger.log('=== processShiftFiles / syncShiftsFromCsv START === cutoff=' + cutoffStr);
 
-  // ---- 1. CSV (long → per-emp map; min/max for range replace) ----
   var csv = loadEmployeeShiftCsvWide_();
   if (!csv.success) {
+    Logger.log('CSV load failed: ' + csv.message);
     return { success: false, message: csv.message };
   }
   Logger.log('CSV: ' + csv.rowCount + ' cells, emps ' + csv.empCount +
     ', dates ' + csv.minDate + ' → ' + csv.maxDate +
     ' (' + (new Date().getTime() - started) + ' ms)');
 
-  // ---- 2. Existing sheet → grid (already drops < cutoff and CSV range) ----
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblShift');
   if (!sheet) sheet = ss.insertSheet('tblShift');
@@ -57,7 +43,6 @@ function syncShiftsFromCsv() {
   Logger.log('Existing grid emps (after retention + CSV-range drop): ' +
     Object.keys(grid).length + ' (' + (new Date().getTime() - started) + ' ms)');
 
-  // ---- 3. Unpivot CSV into grid (Emp ID mapped; CSV wins for its dates) ----
   var empIds = Object.keys(csv.byEmp);
   for (var i = 0; i < empIds.length; i++) {
     var empId = empIds[i];
@@ -65,12 +50,10 @@ function syncShiftsFromCsv() {
     var dates = csv.byEmp[empId];
     var dk = Object.keys(dates);
     for (var j = 0; j < dk.length; j++) {
-      // CSV rows older than cutoff were already skipped at load
       grid[empId][dk[j]] = dates[dk[j]];
     }
   }
 
-  // ---- 4. Build date column list (retention only) + prune empty emps ----
   var allDates = {};
   var activeEmps = [];
   var prunedEmps = 0;
@@ -84,7 +67,8 @@ function syncShiftsFromCsv() {
     var ds = Object.keys(m);
     for (var d = 0; d < ds.length; d++) {
       var dStr = ds[d];
-      if (dStr < cutoffStr) continue; // retention: drop old columns
+      if (!isYmd_(dStr)) continue;
+      if (dStr < cutoffStr) continue;
       var code = m[dStr];
       if (!code) continue;
       kept[dStr] = code;
@@ -95,7 +79,7 @@ function syncShiftsFromCsv() {
       grid[id] = kept;
       activeEmps.push(id);
     } else {
-      delete grid[id]; // no shifts left in retention window → drop row
+      delete grid[id];
       prunedEmps++;
     }
   }
@@ -116,12 +100,14 @@ function syncShiftsFromCsv() {
   }
 
   Logger.log('Wide matrix: ' + activeEmps.length + ' emps × ' + dateList.length +
-    ' dates (pruned empty emps: ' + prunedEmps + ') (' +
-    (new Date().getTime() - started) + ' ms)');
+    ' dates (pruned empty emps: ' + prunedEmps + ') sample headers: ' +
+    dateList.slice(0, 5).join(', ') +
+    (dateList.length > 5 ? '…' : '') +
+    ' (' + (new Date().getTime() - started) + ' ms)');
 
-  // ---- 5. Recreate sheet + write ----
   sheet = resetTblShiftSheet_(ss, sheet);
   writeWideChunked_(sheet, out);
+  forceShiftHeaderTextFormat_(sheet, dateList.length);
   SpreadsheetApp.flush();
 
   try {
@@ -135,7 +121,7 @@ function syncShiftsFromCsv() {
     (dateList.length ? ' (' + dateList[0] + ' → ' + dateList[dateList.length - 1] + ')' : '') +
     '. CSV range ' + csv.minDate + '→' + csv.maxDate + ' replaced. ' +
     'Cutoff ' + cutoffStr + '. Empty emp rows pruned: ' + prunedEmps + '.';
-  Logger.log(msg);
+  Logger.log('=== processShiftFiles END === ' + msg);
   return {
     success: true,
     message: msg,
@@ -151,14 +137,9 @@ function syncShiftsFromCsv() {
   };
 }
 
-/**
- * Replace tblShift with a fresh sheet so leftover long-format rows cannot
- * expand into millions of cells when wide columns are added.
- */
 function resetTblShiftSheet_(ss, sheet) {
   var name = 'tblShift';
   var idx = sheet.getIndex();
-
   try {
     ss.deleteSheet(sheet);
     var fresh = ss.insertSheet(name, Math.max(0, idx - 1));
@@ -176,7 +157,6 @@ function resetTblShiftSheet_(ss, sheet) {
   }
 }
 
-/** 1st of current month, 12 months ago. */
 function shiftRetentionCutoff_() {
   var now = new Date();
   return new Date(now.getFullYear() - 1, now.getMonth(), 1);
@@ -188,47 +168,109 @@ function ymd_(d) {
     ('0' + d.getDate()).slice(-2);
 }
 
-function ymdFromAny_(val) {
-  if (val === null || val === undefined || val === '') return null;
-  if (val instanceof Date && !isNaN(val.getTime())) return ymd_(val);
-  var s = String(val).trim();
-  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return m[1] + '-' + m[2] + '-' + m[3];
-  var d = new Date(s);
-  if (isNaN(d.getTime())) return null;
-  return ymd_(d);
+function isYmd_(s) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
 }
 
 /**
- * Existing tblShift → grid.
- * Always applies:
- *   - drop dates < cutoffStr (retention)
- *   - drop dates in [csvMin, csvMax] (will be refilled from CSV)
- * Supports wide and legacy long layouts.
+ * Normalize any value to strict yyyy-MM-dd string.
+ * NEVER use ambiguous slash parsing via new Date(s) (MM/DD vs DD/MM).
  */
+function ymdFromAny_(val) {
+  if (val === null || val === undefined || val === '') return null;
+
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    var d = new Date(val.getTime());
+    if (d.getHours() >= 20) {
+      d = new Date(d.getTime() + 2 * 60 * 60 * 1000);
+    }
+    return ymd_(d);
+  }
+
+  var s = String(val).trim();
+
+  // ISO: 2026-07-01 or 2026-07-01T00:00:00
+  var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    return iso[1] + '-' + iso[2] + '-' + iso[3];
+  }
+
+  var months = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+  };
+  var mon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
+  if (mon && months[mon[2].toLowerCase()]) {
+    var y = Number(mon[3]);
+    if (y < 100) y = y >= 70 ? 1900 + y : 2000 + y;
+    return y + '-' +
+      ('0' + months[mon[2].toLowerCase()]).slice(-2) + '-' +
+      ('0' + Number(mon[1])).slice(-2);
+  }
+
+  // DD/MM/YYYY (Nigeria) — not MM/DD
+  var dmy = s.match(/^(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{2,4})$/);
+  if (dmy) {
+    var day = Number(dmy[1]);
+    var month = Number(dmy[2]);
+    var year = Number(dmy[3]);
+    if (year < 100) year = year >= 70 ? 1900 + year : 2000 + year;
+    if (month > 12 && day <= 12) {
+      var tmp = day; day = month; month = tmp;
+    }
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return year + '-' +
+      ('0' + month).slice(-2) + '-' +
+      ('0' + day).slice(-2);
+  }
+
+  Logger.log('ymdFromAny_: unparseable date "' + s + '"');
+  return null;
+}
+
+function forceShiftHeaderTextFormat_(sheet, numDateCols) {
+  if (numDateCols < 1) return;
+  try {
+    sheet.getRange(1, 2, 1, numDateCols).setNumberFormat('@');
+    var hdr = sheet.getRange(1, 2, 1, numDateCols).getValues()[0];
+    var rowVals = [hdr.map(function (h) {
+      var y = ymdFromAny_(h);
+      return y || String(h || '');
+    })];
+    sheet.getRange(1, 2, 1, numDateCols).setNumberFormat('@');
+    sheet.getRange(1, 2, 1, numDateCols).setValues(rowVals);
+    Logger.log('forceShiftHeaderTextFormat_: ' + numDateCols + ' date headers as text');
+  } catch (e) {
+    Logger.log('forceShiftHeaderTextFormat_ error: ' + e.message);
+  }
+}
+
 function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
   var grid = {};
   var data = sheet.getDataRange().getValues();
   if (data.length < 2) return grid;
 
   var h0 = String(data[0][0] || '').trim().toLowerCase();
-  var h1 = String(data[0][1] || '').trim();
+  var h1 = data[0][1];
+  var h1Str = ymdFromAny_(h1) || String(h1 || '').trim();
 
-  var isWide = /^\d{4}-\d{2}-\d{2}/.test(h1) ||
-    (h0.indexOf('emp') === 0 && h1.toLowerCase() !== 'date');
+  var isWide = isYmd_(h1Str) ||
+    (h0.indexOf('emp') === 0 && String(h1).toLowerCase() !== 'date');
 
   if (isWide) {
     var dateHeaders = [];
     for (var c = 1; c < data[0].length; c++) {
       dateHeaders.push(ymdFromAny_(data[0][c]));
     }
+    Logger.log('loadExistingShiftGrid_ wide: ' + dateHeaders.filter(Boolean).length +
+      ' date cols, sample: ' + dateHeaders.filter(Boolean).slice(0, 3).join(', '));
     for (var r = 1; r < data.length; r++) {
       var empId = String(data[r][0] || '').trim().toUpperCase();
       if (!empId) continue;
       if (!grid[empId]) grid[empId] = {};
       for (var c2 = 1; c2 < data[r].length; c2++) {
         var dStr = dateHeaders[c2 - 1];
-        if (!dStr) continue;
+        if (!dStr || !isYmd_(dStr)) continue;
         if (dStr < cutoffStr) continue;
         if (csvMin && csvMax && dStr >= csvMin && dStr <= csvMax) continue;
         var sh = String(data[r][c2] || '').trim().toUpperCase();
@@ -238,7 +280,6 @@ function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
     return grid;
   }
 
-  // Legacy long: Emp ID | Date | Shift
   for (var i = 1; i < data.length; i++) {
     var emp = String(data[i][0] || '').trim().toUpperCase();
     if (!emp) continue;
@@ -254,24 +295,32 @@ function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
   return grid;
 }
 
-/**
- * CSV long rows → { byEmp, minDate, maxDate }.
- * Skips shifts older than retention cutoff.
- */
 function loadEmployeeShiftCsvWide_() {
   try {
     var folder = DriveApp.getFolderById(EMP_SHIFT_FOLDER_ID);
     var files = folder.getFilesByName(EMP_SHIFT_CSV_NAME);
-    if (!files.hasNext()) {
+    var file = null;
+    if (files.hasNext()) {
+      file = files.next();
+      while (files.hasNext()) {
+        var f2 = files.next();
+        if (f2.getLastUpdated() > file.getLastUpdated()) file = f2;
+      }
+    } else {
+      var all = folder.getFiles();
+      while (all.hasNext()) {
+        var f = all.next();
+        if (/employee\s*shift.*\.csv$/i.test(f.getName())) {
+          if (!file || f.getLastUpdated() > file.getLastUpdated()) file = f;
+        }
+      }
+    }
+    if (!file) {
       return { success: false, message: 'CSV not found: ' + EMP_SHIFT_CSV_NAME };
     }
-    var file = files.next();
-    while (files.hasNext()) {
-      var f2 = files.next();
-      if (f2.getLastUpdated() > file.getLastUpdated()) file = f2;
-    }
 
-    var parsed = Utilities.parseCsv(file.getBlob().getDataAsString());
+    var text = file.getBlob().getDataAsString().replace(/^\uFEFF/, '');
+    var parsed = Utilities.parseCsv(text);
     if (!parsed || parsed.length < 2) {
       return { success: false, message: 'Shift CSV empty' };
     }
@@ -304,6 +353,7 @@ function loadEmployeeShiftCsvWide_() {
     var minDate = null;
     var maxDate = null;
     var rowCount = 0;
+    var badDates = 0;
 
     for (var r = 1; r < parsed.length; r++) {
       var row = parsed[r];
@@ -312,13 +362,13 @@ function loadEmployeeShiftCsvWide_() {
       if (!empId) continue;
 
       var rawD = String(row[iDate] || '').trim();
-      var dStr = null;
-      if (rawD.length >= 10 && rawD.charAt(4) === '-' && rawD.charAt(7) === '-') {
-        dStr = rawD.substring(0, 10);
-      } else {
-        dStr = ymdFromAny_(rawD);
+      var dStr = ymdFromAny_(rawD);
+      if (!dStr) {
+        badDates++;
+        if (badDates <= 5) Logger.log('Bad shift date: "' + rawD + '" emp ' + empId);
+        continue;
       }
-      if (!dStr || dStr < cutoffStr) continue;
+      if (dStr < cutoffStr) continue;
 
       var shift = String(row[iShift] || '').trim().toUpperCase();
       if (!shift) continue;
@@ -330,13 +380,17 @@ function loadEmployeeShiftCsvWide_() {
       if (!maxDate || dStr > maxDate) maxDate = dStr;
     }
 
+    Logger.log('CSV parse: ' + rowCount + ' cells, badDates=' + badDates +
+      ', range ' + minDate + ' → ' + maxDate);
+
     return {
       success: true,
       byEmp: byEmp,
       minDate: minDate,
       maxDate: maxDate,
       rowCount: rowCount,
-      empCount: Object.keys(byEmp).length
+      empCount: Object.keys(byEmp).length,
+      badDates: badDates
     };
   } catch (err) {
     return { success: false, message: 'CSV error: ' + err.message };
@@ -349,9 +403,20 @@ function writeWideChunked_(sheet, rows) {
   var need = cols - sheet.getMaxColumns();
   if (need > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), need);
 
+  if (cols > 1) {
+    try {
+      sheet.getRange(1, 2, 1, cols - 1).setNumberFormat('@');
+    } catch (e) {}
+  }
+
   var chunk = SHIFT_WRITE_CHUNK_ROWS;
   for (var i = 0; i < rows.length; i += chunk) {
     var part = rows.slice(i, i + chunk);
+    if (i === 0 && part.length > 0) {
+      for (var c = 1; c < part[0].length; c++) {
+        part[0][c] = String(part[0][c] || '');
+      }
+    }
     sheet.getRange(i + 1, 1, part.length, cols).setValues(part);
     if (i + chunk < rows.length) SpreadsheetApp.flush();
   }
