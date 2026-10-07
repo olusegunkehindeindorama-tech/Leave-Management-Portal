@@ -1,29 +1,10 @@
 /**
- * ============================================================
- *  DAILY LEAVE MODEL (canonical tblLeave schema)
- * ============================================================
- *  Columns:
- *    Entry Code | Emp ID | Leave Type | Leave Date |
- *    Leave Utilized | Entitlement Year | Leave Reason
- *
- *  One row = one employee on leave for one calendar day.
- *  Multi-day applications expand Start→End into N daily rows
- *  sharing the same Entry Code.
- *
- *  Dedup key: EmpID | yyyy-MM-dd  (one leave day per employee; type ignored)
- *  Leave Utilized = shift multiplier for that day (0 / 1 / 1.5 …)
- *  Leave Date always written as local noon (WAT-safe).
- * ============================================================
+ * DAILY LEAVE MODEL — Emp|LeaveDate dedup; noon Leave Date; util filled only by recalc.
  */
 
 var DAILY_LEAVE_HEADERS = [
-  'Entry Code',
-  'Emp ID',
-  'Leave Type',
-  'Leave Date',
-  'Leave Utilized',
-  'Entitlement Year',
-  'Leave Reason'
+  'Entry Code', 'Emp ID', 'Leave Type', 'Leave Date',
+  'Leave Utilized', 'Entitlement Year', 'Leave Reason'
 ];
 
 function ensureDailyTblLeaveSchema_() {
@@ -36,14 +17,10 @@ function ensureDailyTblLeaveSchema_() {
   var needRewrite = DAILY_LEAVE_HEADERS.some(function (h, i) {
     return existing[i] !== h;
   }) || existing.length < DAILY_LEAVE_HEADERS.length;
-
   if (needRewrite && sheet.getLastRow() <= 1) {
     sheet.clear();
     sheet.getRange(1, 1, 1, DAILY_LEAVE_HEADERS.length).setValues([DAILY_LEAVE_HEADERS]);
     sheet.setFrozenRows(1);
-    Logger.log('ensureDailyTblLeaveSchema_: headers written (empty sheet)');
-  } else if (needRewrite) {
-    Logger.log('ensureDailyTblLeaveSchema_: sheet has data with old headers — run migrateTblLeaveToDaily()');
   }
   return sheet;
 }
@@ -60,9 +37,7 @@ function dailyDateKey_(val) {
   if (Object.prototype.toString.call(val) === '[object Date]' && !isNaN(val.getTime())) {
     var d = val;
     if (d.getHours() >= 20) d = new Date(d.getTime() + 2 * 60 * 60 * 1000);
-    return d.getFullYear() + '-' +
-      ('0' + (d.getMonth() + 1)).slice(-2) + '-' +
-      ('0' + d.getDate()).slice(-2);
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
   }
   var s = String(val).trim();
   if (s.charAt(0) === "'") s = s.substring(1);
@@ -72,8 +47,7 @@ function dailyDateKey_(val) {
   var months = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
   if (mon && months[mon[2].toLowerCase()]) {
     var y = Number(mon[3]); if (y < 100) y = y >= 70 ? 1900 + y : 2000 + y;
-    return y + '-' + ('0' + months[mon[2].toLowerCase()]).slice(-2) + '-' +
-      ('0' + Number(mon[1])).slice(-2);
+    return y + '-' + ('0' + months[mon[2].toLowerCase()]).slice(-2) + '-' + ('0' + Number(mon[1])).slice(-2);
   }
   var dmy = s.match(/^(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{2,4})$/);
   if (dmy) {
@@ -106,22 +80,15 @@ function expandDateRangeKeys_(startVal, endVal) {
   var end = new Date(Number(endP[0]), Number(endP[1]) - 1, Number(endP[2]), 12, 0, 0);
   var guard = 0;
   while (cur.getTime() <= end.getTime() && guard < 370) {
-    out.push(
-      cur.getFullYear() + '-' +
-      ('0' + (cur.getMonth() + 1)).slice(-2) + '-' +
-      ('0' + cur.getDate()).slice(-2)
-    );
+    out.push(cur.getFullYear() + '-' + ('0' + (cur.getMonth() + 1)).slice(-2) + '-' + ('0' + cur.getDate()).slice(-2));
     cur.setDate(cur.getDate() + 1);
     guard++;
   }
   return out;
 }
 
-/** Dedup key: Emp | LeaveDate only (one leave day per employee). */
 function dailyFingerprint_(empId, leaveDateKey, leaveType) {
-  // leaveType ignored — at most one leave row per emp per calendar day
-  return String(empId || '').trim().toUpperCase() + '|' +
-    String(leaveDateKey || '');
+  return String(empId || '').trim().toUpperCase() + '|' + String(leaveDateKey || '');
 }
 
 function buildDailyLeaveRow_(entryCode, empId, leaveType, leaveDateKey, utilized, entitlementYear, leaveReason) {
@@ -148,11 +115,9 @@ function expandLeaveApplicationToDailyRows_(entryCode, empId, leaveType, startVa
 function appendDailyLeaveRows_(sheet, dailyRows, existingFpMap) {
   if (!dailyRows || !dailyRows.length) return { appended: 0, skipped: 0 };
   sheet = sheet || ensureDailyTblLeaveSchema_();
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
-    .map(function (h) { return String(h || '').trim(); });
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(function (h) { return String(h || '').trim(); });
   var empI = headers.indexOf('Emp ID');
   var dateI = headers.indexOf('Leave Date');
-
   var fpMap = existingFpMap || {};
   if (!existingFpMap && sheet.getLastRow() >= 2 && empI >= 0 && dateI >= 0) {
     var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
@@ -162,14 +127,11 @@ function appendDailyLeaveRows_(sheet, dailyRows, existingFpMap) {
       if (fp) fpMap[fp] = true;
     }
   }
-
   var toWrite = [];
   var skipped = 0;
   for (var i = 0; i < dailyRows.length; i++) {
     var row = dailyRows[i];
-    var emp = row[1];
-    var dk = dailyDateKey_(row[3]);
-    var fp2 = dailyFingerprint_(emp, dk);
+    var fp2 = dailyFingerprint_(row[1], dailyDateKey_(row[3]));
     if (fpMap[fp2]) { skipped++; continue; }
     fpMap[fp2] = true;
     toWrite.push(row);
@@ -187,11 +149,9 @@ function migrateTblLeaveToDaily() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblLeave');
   if (!sheet) return { success: false, message: 'tblLeave missing' };
-
   if (isDailyTblLeaveSchema_(sheet)) {
     return { success: true, message: 'Already daily schema — nothing to migrate', rows: sheet.getLastRow() - 1 };
   }
-
   Logger.log('=== migrateTblLeaveToDaily START ===');
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
@@ -199,7 +159,6 @@ function migrateTblLeaveToDaily() {
     ensureDailyTblLeaveSchema_();
     return { success: true, message: 'Empty sheet — headers set to daily', rows: 0 };
   }
-
   var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
   var headers = data[0].map(function (h) { return String(h || '').trim(); });
   var iEntry = headers.indexOf('Entry Code');
@@ -208,18 +167,14 @@ function migrateTblLeaveToDaily() {
   var iStart = headers.indexOf('Start Date');
   var iEnd = headers.indexOf('End Date');
   var iReason = headers.indexOf('Leave Reason');
-  var iUtil = headers.indexOf('Leave Utilized');
   var iYear = headers.indexOf('Entitlement Year');
-
   if (iEmp < 0 || iStart < 0) {
     return { success: false, message: 'Legacy columns Emp ID / Start Date missing' };
   }
-
   var expanded = [];
   var fpMap = {};
   var sourceRows = 0;
   var dupSkip = 0;
-
   for (var r = 1; r < data.length; r++) {
     var emp = String(data[r][iEmp] || '').trim().toUpperCase();
     if (!emp) continue;
@@ -231,38 +186,23 @@ function migrateTblLeaveToDaily() {
     var end = iEnd >= 0 ? data[r][iEnd] : start;
     var keys = expandDateRangeKeys_(start, end);
     if (!keys.length) continue;
-
-    var totalUtil = iUtil >= 0 ? Number(data[r][iUtil]) || 0 : 0;
+    // Util left BLANK — never divide old range util (that caused 0.045/0.05/0.067)
     var year = iYear >= 0 ? data[r][iYear] : '';
-    var perDay = keys.length ? totalUtil / keys.length : 0;
-
     for (var k = 0; k < keys.length; k++) {
       var fp = dailyFingerprint_(emp, keys[k]);
       if (fpMap[fp]) { dupSkip++; continue; }
       fpMap[fp] = true;
-      expanded.push(buildDailyLeaveRow_(
-        entry, emp, lt, keys[k],
-        totalUtil ? Math.round(perDay * 1000) / 1000 : '',
-        year, reason
-      ));
+      expanded.push(buildDailyLeaveRow_(entry, emp, lt, keys[k], '', year, reason));
     }
   }
-
   var stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmm');
   var legacyName = 'tblLeave_legacy_' + stamp;
-  try {
-    sheet.setName(legacyName);
-    Logger.log('Renamed old sheet → ' + legacyName);
-  } catch (e) {
-    Logger.log('Rename failed: ' + e.message);
-  }
-
+  try { sheet.setName(legacyName); } catch (e) { Logger.log('Rename failed: ' + e.message); }
   var fresh = ss.getSheetByName('tblLeave');
   if (!fresh) fresh = ss.insertSheet('tblLeave');
   fresh.clear();
   fresh.getRange(1, 1, 1, DAILY_LEAVE_HEADERS.length).setValues([DAILY_LEAVE_HEADERS]);
   fresh.setFrozenRows(1);
-
   if (expanded.length) {
     var chunk = 500;
     for (var i = 0; i < expanded.length; i += chunk) {
@@ -272,16 +212,7 @@ function migrateTblLeaveToDaily() {
     }
     fresh.getRange(2, 4, expanded.length, 1).setNumberFormat('dd-mmm-yyyy');
   }
-
-  var msg = 'Migrated ' + sourceRows + ' range rows → ' + expanded.length +
-    ' daily rows (skipped ' + dupSkip + ' day-dups). Legacy: ' + legacyName;
+  var msg = 'Migrated ' + sourceRows + ' range rows → ' + expanded.length + ' daily rows (skipped ' + dupSkip + ' day-dups). Legacy: ' + legacyName;
   Logger.log('=== migrateTblLeaveToDaily END === ' + msg);
-  return {
-    success: true,
-    message: msg,
-    sourceRows: sourceRows,
-    dailyRows: expanded.length,
-    skippedDayDups: dupSkip,
-    legacySheet: legacyName
-  };
+  return { success: true, message: msg, sourceRows: sourceRows, dailyRows: expanded.length, skippedDayDups: dupSkip, legacySheet: legacyName };
 }
