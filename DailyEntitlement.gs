@@ -1,24 +1,11 @@
 /**
  * DAILY ENTITLEMENT + UTILIZATION
- * Requires DailyLeaveModel.gs + loadEntitlementMasterData_ / policies / multipliers.
+ * Sort by Emp ID + Leave Date. For each day:
+ *  1. Match Sys_LeavePolicies
+ *  2. Util = ActualDays → 1; ShiftRoaster → Multiplier_Policy weight
+ *  3. Entitlement Year from CF deadline + sequential StartingBal
+ * NEVER keeps migration fractions (0.045 etc.) — always overwrites util.
  */
-
-function dailyShiftMultiplier_(master, empId, dateKey, multFlag) {
-  var shifts = master.shifts || master.shiftMap || {};
-  var byEmp = shifts[empId] || shifts[String(empId).toUpperCase()] || {};
-  var code = String(byEmp[dateKey] || '').trim().toUpperCase();
-  if (!code) return 1;
-  var flag = String(multFlag || 'No').trim();
-  if (flag !== 'Yes' && flag !== 'No') flag = 'No';
-  var table = (master.multipliers && master.multipliers[flag]) || {};
-  if (table[code] !== undefined && table[code] !== '') return Number(table[code]);
-  if (code === 'O') return 0;
-  if (code === 'G') return 1;
-  if (code === 'A' || code === 'B' || code === 'D' || code === 'N') {
-    return flag === 'Yes' ? 1.5 : 1;
-  }
-  return 1;
-}
 
 function recalculateAllLeaveUtilized() {
   return calculateLeaveUtilized();
@@ -30,7 +17,7 @@ function calculateLeaveUtilized() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblLeave');
   if (!sheet) return { success: false, message: 'tblLeave missing' };
-  if (!isDailyTblLeaveSchema_(sheet)) {
+  if (typeof isDailyTblLeaveSchema_ === 'function' && !isDailyTblLeaveSchema_(sheet)) {
     return { success: false, message: 'tblLeave is not daily schema. Run migrateTblLeaveToDaily() first.' };
   }
 
@@ -40,12 +27,9 @@ function calculateLeaveUtilized() {
   if (!master.policies || !master.policies.length) {
     return { success: false, message: 'Sys_LeavePolicies empty' };
   }
-
-  if (!master.shifts && !master.shiftMap) master.shifts = loadWideShiftMap_();
-  else if (master.shiftMap && !master.shifts) master.shifts = master.shiftMap;
-  if (!master.multipliers) {
-    try { master.multipliers = loadMultipliersCached_(); }
-    catch (e2) { master.multipliers = { Yes: {}, No: {} }; }
+  if (!master.multipliers) master.multipliers = { Yes: {}, No: {} };
+  if (!master.shifts || !Object.keys(master.shifts).length) {
+    if (typeof loadWideShiftMap_ === 'function') master.shifts = loadWideShiftMap_();
   }
 
   var lastRow = sheet.getLastRow();
@@ -67,14 +51,14 @@ function calculateLeaveUtilized() {
   var items = [];
   for (var r = 0; r < data.length; r++) {
     var emp = String(data[r][iEmp] || '').trim().toUpperCase();
-    var dk = dailyDateKey_(data[r][iDate]);
+    var dk = (typeof dailyDateKey_ === 'function')
+      ? dailyDateKey_(data[r][iDate])
+      : formatDateKey(new Date(data[r][iDate]));
     if (!emp || !dk) continue;
-    items.push({
-      idx: r, emp: emp,
-      type: String(data[r][iType] || '').trim(),
-      dateKey: dk,
-      dateObj: dailySheetDate_(dk)
-    });
+    var dObj = (typeof dailySheetDate_ === 'function')
+      ? dailySheetDate_(dk)
+      : new Date(Number(dk.substring(0, 4)), Number(dk.substring(5, 7)) - 1, Number(dk.substring(8, 10)), 12, 0, 0);
+    items.push({ idx: r, emp: emp, type: String(data[r][iType] || '').trim(), dateKey: dk, dateObj: dObj });
   }
 
   items.sort(function (a, b) {
@@ -99,41 +83,66 @@ function calculateLeaveUtilized() {
     remainingPrev[empId + '|' + calYear] = Math.max(0, v);
   }
 
+  function utilForDay_(empId, dateKey, dateObj, leaveType) {
+    var empRow = (master.employees && master.employees[empId]) || { 'Emp ID': empId };
+    var pol = matchPolicyForEmp_(master.policies, empRow, leaveType, dateObj);
+    var meta = policyCalcMeta_(pol);
+
+    if (meta.method === 'ActualDays') {
+      return { util: 1, meta: meta, shift: '' };
+    }
+
+    var shiftMap = (master.shifts && master.shifts[empId]) || {};
+    var code = String(shiftMap[dateKey] || '').trim().toUpperCase();
+    if (!code) {
+      code = (typeof defaultShiftCode_ === 'function')
+        ? defaultShiftCode_(dateObj)
+        : ((dateObj.getDay() === 0 || dateObj.getDay() === 6) ? 'O' : 'G');
+    }
+
+    var w;
+    if (typeof multiplierWeight_ === 'function') {
+      w = multiplierWeight_(master.multipliers, meta.multFlag, code);
+    } else {
+      var table = (meta.multFlag === 'Yes') ? (master.multipliers.Yes || {}) : (master.multipliers.No || {});
+      w = (table[code] !== undefined && table[code] !== '' && !isNaN(Number(table[code])))
+        ? Number(table[code])
+        : (code === 'O' ? 0 : 1);
+    }
+    if (isNaN(w) || w < 0) w = 0;
+    w = Math.round(w * 1000) / 1000;
+    return { util: w, meta: meta, shift: code };
+  }
+
   var utilCol = [];
   var yearCol = [];
   for (var i = 0; i < data.length; i++) {
-    utilCol.push([data[i][iUtil]]);
-    yearCol.push([data[i][iYear]]);
+    utilCol.push([0]);
+    yearCol.push(['']);
   }
 
   var updated = 0;
+  var sampleLog = 0;
   for (var j = 0; j < items.length; j++) {
     var it = items[j];
-    var empRow = (master.employees && master.employees[it.emp]) || { 'Emp ID': it.emp };
-    var pol = matchPolicyForEmp_(master.policies, empRow, it.type, it.dateObj);
-    var meta = policyCalcMeta_(pol);
-    var multFlag = String((pol && pol['Multiplier']) || 'No').trim();
-    var util = dailyShiftMultiplier_(master, it.emp, it.dateKey, multFlag);
-
+    var res = utilForDay_(it.emp, it.dateKey, it.dateObj, it.type);
+    var util = res.util;
+    var meta = res.meta;
     var calYear = Number(it.dateKey.substring(0, 4));
     var year = calYear;
+
     var usesAnnual = (String(it.type).trim() === 'Annual Leave') ||
       String(meta.deductFrom || '').toLowerCase().indexOf('annual') >= 0;
 
     if (usesAnnual && meta.deadline) {
       var deadline = carryDeadlineForYear_(meta.deadline, calYear);
-      if (deadline) {
-        var day = it.dateObj;
-        if (day.getTime() <= deadline.getTime()) {
-          var rem = getPrev_(it.emp, calYear);
-          if (rem > 0 && util > 0) {
-            year = calYear - 1;
-            setPrev_(it.emp, calYear, rem - util);
-          } else if (rem > 0 && util === 0) {
-            year = calYear - 1;
-          } else {
-            year = calYear;
-          }
+      if (deadline && it.dateObj.getTime() <= deadline.getTime()) {
+        var rem = getPrev_(it.emp, calYear);
+        if (rem > 0) {
+          year = calYear - 1;
+          if (util > 0) setPrev_(it.emp, calYear, rem - util);
+        } else {
+          year = calYear;
         }
       }
     }
@@ -141,6 +150,13 @@ function calculateLeaveUtilized() {
     utilCol[it.idx][0] = util;
     yearCol[it.idx][0] = year;
     updated++;
+
+    if (sampleLog < 5) {
+      Logger.log('sample ' + it.emp + ' ' + it.dateKey + ' type=' + it.type +
+        ' shift=' + (res.shift || '') + ' util=' + util + ' year=' + year +
+        ' method=' + meta.method + ' multFlag=' + meta.multFlag);
+      sampleLog++;
+    }
   }
 
   sheet.getRange(2, iUtil + 1, n, 1).setValues(utilCol);
@@ -153,7 +169,7 @@ function calculateLeaveUtilized() {
   try { if (typeof cacheClearAll_ === 'function') cacheClearAll_(); } catch (e4) {}
 
   var ms = new Date().getTime() - t0;
-  var msg = 'Daily recalc: updated ' + updated + ' row(s) in ' + ms + ' ms';
+  var msg = 'Daily recalc: updated ' + updated + ' row(s) in ' + ms + ' ms (util from policy/shift only)';
   Logger.log('=== DAILY RECALC END === ' + msg);
   return { success: true, message: msg, updated: updated, elapsedMs: ms };
 }
@@ -167,17 +183,20 @@ function loadWideShiftMap_() {
   var display = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
   var dateKeys = [];
   for (var c = 1; c < values[0].length; c++) {
-    dateKeys.push(dailyDateKey_(display[c]) || dailyDateKey_(values[0][c]));
+    var dk = (typeof dailyDateKey_ === 'function')
+      ? (dailyDateKey_(display[c]) || dailyDateKey_(values[0][c]))
+      : String(display[c] || values[0][c] || '').substring(0, 10);
+    dateKeys.push(dk);
   }
   for (var r = 1; r < values.length; r++) {
     var emp = String(values[r][0] || '').trim().toUpperCase();
     if (!emp) continue;
     if (!map[emp]) map[emp] = {};
     for (var c2 = 1; c2 < values[r].length; c2++) {
-      var dk = dateKeys[c2 - 1];
-      if (!dk) continue;
+      var key = dateKeys[c2 - 1];
+      if (!key) continue;
       var code = String(values[r][c2] || '').trim().toUpperCase();
-      if (code) map[emp][dk] = code;
+      if (code) map[emp][key] = code;
     }
   }
   Logger.log('loadWideShiftMap_: ' + Object.keys(map).length + ' employees');
