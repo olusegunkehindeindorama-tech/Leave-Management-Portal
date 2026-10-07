@@ -1,7 +1,8 @@
 /**
  * LEAVE BALANCE (policy-driven) — daily tblLeave compatible
  * Aggregates Leave Utilized by Emp ID + Leave Type + Entitlement Year
- * Writes balances into tblEmployee (Annual, Casual, …)
+ * Annual charge = Annual util + types with Deduct from = Annual Leave
+ *               + Probation Leave (always)
  * Public: updateAllEmployeeLeaveBalances, exportAnnualCasualBalances, apiGetEmployeeBalance
  */
 
@@ -196,10 +197,15 @@ function computeBalancesForEmployeeCore_(profile, policies, usage, today) {
     }
   }
 
+  // Policy Deduct-from = Annual Leave + ALWAYS Probation Leave
   var attachedToAnnual = [];
   Object.keys(typeMeta).forEach(function (t) {
-    if (typeMeta[t].deductFrom === 'Annual Leave') attachedToAnnual.push(t);
+    var df = String(typeMeta[t].deductFrom || '').trim().toLowerCase();
+    if (df === 'annual leave' || df === 'annual') attachedToAnnual.push(t);
   });
+  if (attachedToAnnual.indexOf('Probation Leave') < 0) {
+    attachedToAnnual.push('Probation Leave');
+  }
 
   function utilOf(leaveType, year) {
     var u = usage[leaveType] || {};
@@ -281,6 +287,7 @@ function computeBalancesForEmployeeCore_(profile, policies, usage, today) {
   var annualBal = balances['Annual Leave'];
   if (typeof annualBal === 'number') {
     attachedToAnnual.forEach(function (t) {
+      if (t === 'Probation Leave') return; // probation has no separate balance pool to cap
       if (typeof balances[t] !== 'number') return;
       var capped = Math.min(balances[t], annualBal);
       balances[t] = capped;
@@ -311,7 +318,6 @@ function leaveDateKeySafe_(d) {
   }
 }
 
-/** Recalculate every employee leave balance → tblEmployee columns */
 function updateAllEmployeeLeaveBalances() {
   var started = new Date().getTime();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
