@@ -10,8 +10,9 @@
  *  Multi-day applications expand Start→End into N daily rows
  *  sharing the same Entry Code.
  *
- *  Dedup key: EmpID | yyyy-MM-dd | Leave Type
+ *  Dedup key: EmpID | yyyy-MM-dd  (one leave day per employee; type ignored)
  *  Leave Utilized = shift multiplier for that day (0 / 1 / 1.5 …)
+ *  Leave Date always written as local noon (WAT-safe).
  * ============================================================
  */
 
@@ -116,10 +117,11 @@ function expandDateRangeKeys_(startVal, endVal) {
   return out;
 }
 
+/** Dedup key: Emp | LeaveDate only (one leave day per employee). */
 function dailyFingerprint_(empId, leaveDateKey, leaveType) {
+  // leaveType ignored — at most one leave row per emp per calendar day
   return String(empId || '').trim().toUpperCase() + '|' +
-    String(leaveDateKey || '') + '|' +
-    String(leaveType || '').trim().toUpperCase();
+    String(leaveDateKey || '');
 }
 
 function buildDailyLeaveRow_(entryCode, empId, leaveType, leaveDateKey, utilized, entitlementYear, leaveReason) {
@@ -150,14 +152,13 @@ function appendDailyLeaveRows_(sheet, dailyRows, existingFpMap) {
     .map(function (h) { return String(h || '').trim(); });
   var empI = headers.indexOf('Emp ID');
   var dateI = headers.indexOf('Leave Date');
-  var typeI = headers.indexOf('Leave Type');
 
   var fpMap = existingFpMap || {};
-  if (!existingFpMap && sheet.getLastRow() >= 2 && empI >= 0 && dateI >= 0 && typeI >= 0) {
+  if (!existingFpMap && sheet.getLastRow() >= 2 && empI >= 0 && dateI >= 0) {
     var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
     for (var r = 0; r < data.length; r++) {
       var ek = dailyDateKey_(data[r][dateI]);
-      var fp = dailyFingerprint_(data[r][empI], ek, data[r][typeI]);
+      var fp = dailyFingerprint_(data[r][empI], ek);
       if (fp) fpMap[fp] = true;
     }
   }
@@ -168,8 +169,7 @@ function appendDailyLeaveRows_(sheet, dailyRows, existingFpMap) {
     var row = dailyRows[i];
     var emp = row[1];
     var dk = dailyDateKey_(row[3]);
-    var lt = row[2];
-    var fp2 = dailyFingerprint_(emp, dk, lt);
+    var fp2 = dailyFingerprint_(emp, dk);
     if (fpMap[fp2]) { skipped++; continue; }
     fpMap[fp2] = true;
     toWrite.push(row);
@@ -237,7 +237,7 @@ function migrateTblLeaveToDaily() {
     var perDay = keys.length ? totalUtil / keys.length : 0;
 
     for (var k = 0; k < keys.length; k++) {
-      var fp = dailyFingerprint_(emp, keys[k], lt);
+      var fp = dailyFingerprint_(emp, keys[k]);
       if (fpMap[fp]) { dupSkip++; continue; }
       fpMap[fp] = true;
       expanded.push(buildDailyLeaveRow_(
