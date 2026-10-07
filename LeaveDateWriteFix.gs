@@ -1,10 +1,11 @@
 /**
- * LeaveDateWriteFix.gs — load AFTER Leave Cleanup.gs, DateUtils.gs, CarryForwardFix.gs
+ * LeaveDateWriteFix.gs — load LAST (after Leave Cleanup, DateUtils, CarryForwardFix)
  *
- * 1. After cleanup pipeline / recalculate, force every Start/End on tblLeave
- *    to local noon + dd-mmm-yyyy (stops WAT 23:00 previous-day drift).
- * 2. Step-by-step Logger logs for pipeline and normalize.
- * 3. Overrides leaveParseDate_ to use toCalendarDate_ (2h nudge) when available.
+ * Goals:
+ *  1. Start/End stay calendar-correct (noon local, format dd-mmm-yyyy).
+ *  2. Pipeline runs normalize ONCE (batch writes) — not after every step.
+ *  3. Dedupe does NOT rewrite every date cell (that was ~14k setValue calls).
+ *  4. Recalc does NOT normalize when already inside the pipeline.
  */
 
 leaveParseDate_ = function (val) {
@@ -53,17 +54,22 @@ function leaveSheetDate_(val) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0);
 }
 
-function leaveWriteDateCell_(sheet, row, col, val) {
-  var v = leaveSheetDate_(val);
-  if (v === '' || v === null) return;
-  sheet.getRange(row, col).setValue(v).setNumberFormat('dd-mmm-yyyy');
+function leaveIsNoonCalendar_(raw, noonDate) {
+  if (!(raw instanceof Date) || isNaN(raw.getTime()) || !noonDate) return false;
+  return raw.getFullYear() === noonDate.getFullYear() &&
+    raw.getMonth() === noonDate.getMonth() &&
+    raw.getDate() === noonDate.getDate() &&
+    raw.getHours() === 12 &&
+    raw.getMinutes() === 0;
 }
 
 /**
- * Walk tblLeave and rewrite every Start/End as noon of the intended calendar day.
+ * Batch-normalize all Start/End on tblLeave.
+ * Uses setValues on whole columns — NOT per-cell setValue.
  */
 function normalizeAllTblLeaveStartEndDates() {
-  Logger.log('=== normalizeAllTblLeaveStartEndDates START ===');
+  var t0 = new Date().getTime();
+  Logger.log('=== normalizeAllTblLeaveStartEndDates START (batch) ===');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblLeave');
   if (!sheet) {
@@ -73,112 +79,135 @@ function normalizeAllTblLeaveStartEndDates() {
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
   if (lastRow < 2) {
-    Logger.log('normalize: no data rows');
     return { success: true, message: 'no rows', fixed: 0 };
   }
-  var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
-  var headers = data[0].map(function (h) { return String(h).trim(); });
+
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0]
+    .map(function (h) { return String(h).trim(); });
   var startIdx = headers.indexOf('Start Date');
   var endIdx = headers.indexOf('End Date');
   if (startIdx < 0 || endIdx < 0) {
-    Logger.log('normalize: Start/End columns missing');
     return { success: false, message: 'Start/End columns missing' };
   }
 
+  var startCol = sheet.getRange(2, startIdx + 1, lastRow - 1, 1).getValues();
+  var endCol = sheet.getRange(2, endIdx + 1, lastRow - 1, 1).getValues();
+  var n = startCol.length;
   var fixed = 0;
-  for (var i = 1; i < data.length; i++) {
-    var rawS = data[i][startIdx];
-    var rawE = data[i][endIdx];
-    if (rawS === '' && rawE === '') continue;
+  var outS = [];
+  var outE = [];
+  var needWrite = false;
 
-    var newS = leaveSheetDate_(rawS);
-    var newE = leaveSheetDate_(rawE);
-    var row = i + 1;
-    var changed = false;
+  for (var i = 0; i < n; i++) {
+    var rawS = startCol[i][0];
+    var rawE = endCol[i][0];
+    var newS = (rawS === '' || rawS === null) ? rawS : leaveSheetDate_(rawS);
+    var newE = (rawE === '' || rawE === null) ? rawE : leaveSheetDate_(rawE);
 
-    if (newS) {
-      var needS = true;
-      if (rawS instanceof Date && !isNaN(rawS.getTime())) {
-        if (rawS.getFullYear() === newS.getFullYear() &&
-            rawS.getMonth() === newS.getMonth() &&
-            rawS.getDate() === newS.getDate() &&
-            rawS.getHours() === 12 && rawS.getMinutes() === 0) {
-          needS = false;
-          sheet.getRange(row, startIdx + 1).setNumberFormat('dd-mmm-yyyy');
-        }
-      }
-      if (needS) {
-        leaveWriteDateCell_(sheet, row, startIdx + 1, newS);
-        changed = true;
-      }
+    var changeS = false;
+    var changeE = false;
+    if (newS && !leaveIsNoonCalendar_(rawS, newS)) {
+      changeS = true;
+      fixed++;
+    } else if (newS) {
+      newS = rawS;
     }
-    if (newE) {
-      var needE = true;
-      if (rawE instanceof Date && !isNaN(rawE.getTime())) {
-        if (rawE.getFullYear() === newE.getFullYear() &&
-            rawE.getMonth() === newE.getMonth() &&
-            rawE.getDate() === newE.getDate() &&
-            rawE.getHours() === 12 && rawE.getMinutes() === 0) {
-          needE = false;
-          sheet.getRange(row, endIdx + 1).setNumberFormat('dd-mmm-yyyy');
-        }
-      }
-      if (needE) {
-        leaveWriteDateCell_(sheet, row, endIdx + 1, newE);
-        changed = true;
-      }
+    if (newE && !leaveIsNoonCalendar_(rawE, newE)) {
+      changeE = true;
+      if (!changeS) fixed++;
+    } else if (newE) {
+      newE = rawE;
     }
-    if (changed) fixed++;
-    if (i % 1000 === 0) {
-      Logger.log('normalize progress: row ' + row + ' fixed so far ' + fixed);
-      SpreadsheetApp.flush();
-    }
+    if (changeS || changeE) needWrite = true;
+    outS.push([newS === '' || newS === null ? rawS : newS]);
+    outE.push([newE === '' || newE === null ? rawE : newE]);
   }
-  SpreadsheetApp.flush();
-  var msg = 'normalizeAllTblLeaveStartEndDates: fixed ' + fixed + ' row(s) of ' + (lastRow - 1);
+
+  if (needWrite) {
+    sheet.getRange(2, startIdx + 1, n, 1).setValues(outS);
+    sheet.getRange(2, endIdx + 1, n, 1).setValues(outE);
+    sheet.getRange(2, startIdx + 1, n, 1).setNumberFormat('dd-mmm-yyyy');
+    sheet.getRange(2, endIdx + 1, n, 1).setNumberFormat('dd-mmm-yyyy');
+    SpreadsheetApp.flush();
+  }
+
+  var ms = new Date().getTime() - t0;
+  var msg = 'normalize batch: fixed ~' + fixed + ' of ' + n + ' rows in ' + ms + ' ms' +
+    (needWrite ? '' : ' (already noon — no write)');
   Logger.log('=== normalizeAllTblLeaveStartEndDates END === ' + msg);
-  return { success: true, message: msg, fixed: fixed, total: lastRow - 1 };
+  return { success: true, message: msg, fixed: fixed, total: n, elapsedMs: ms };
 }
+
+(function () {
+  if (typeof exactDedupeLeaveRecordsInPlace_ === 'function') {
+    var _origDedupe = exactDedupeLeaveRecordsInPlace_;
+    exactDedupeLeaveRecordsInPlace_ = function () {
+      Logger.log('exactDedupe (dates NOT rewritten — normalize runs once later)');
+      var savedWrite = (typeof leaveWriteDateCell_ === 'function') ? leaveWriteDateCell_ : null;
+      leaveWriteDateCell_ = function () { /* no-op during dedupe */ };
+      var result;
+      try {
+        result = _origDedupe();
+      } finally {
+        if (savedWrite) leaveWriteDateCell_ = savedWrite;
+      }
+      return result;
+    };
+    Logger.log('LeaveDateWriteFix: exactDedupe patched — skips date cell writes');
+  }
+})();
+
+var _LEAVE_IN_PIPELINE_ = false;
 
 (function () {
   if (typeof runLeaveCleanupPipeline === 'function') {
     var _origPipeline = runLeaveCleanupPipeline;
     runLeaveCleanupPipeline = function () {
-      Logger.log('=== PIPELINE START (wrapped) ===');
-      Logger.log('[1] original pipeline (overlap + dedupe + recalc) ...');
-      var result = _origPipeline();
-      Logger.log('[1] pipeline core done: ' + (result && result.message ? result.message : ''));
-      Logger.log('[2] normalizeAllTblLeaveStartEndDates (force noon) ...');
+      Logger.log('=== PIPELINE START (optimized) ===');
+      _LEAVE_IN_PIPELINE_ = true;
+      var result;
+      try {
+        Logger.log('[1] overlap + dedupe + recalc (no mid-normalize) ...');
+        result = _origPipeline();
+        Logger.log('[1] core done: ' + (result && result.message ? result.message : ''));
+      } finally {
+        _LEAVE_IN_PIPELINE_ = false;
+      }
+      Logger.log('[2] single batch normalizeAllTblLeaveStartEndDates ...');
       var norm = normalizeAllTblLeaveStartEndDates();
-      Logger.log('[2] normalize done: ' + (norm && norm.message ? norm.message : ''));
-      Logger.log('=== PIPELINE END (wrapped) ===');
+      Logger.log('[2] done: ' + (norm && norm.message ? norm.message : ''));
+      Logger.log('=== PIPELINE END (optimized) ===');
       if (result) {
         result.normalize = norm;
         result.message = (result.message || '') + ' | ' + (norm.message || '');
       }
       return result;
     };
-    Logger.log('LeaveDateWriteFix: runLeaveCleanupPipeline wrapped with noon normalize');
+    Logger.log('LeaveDateWriteFix: pipeline wraps once with batch normalize at end');
   }
 
   if (typeof calculateLeaveUtilized === 'function') {
     var _origRecalc = calculateLeaveUtilized;
     calculateLeaveUtilized = function () {
-      Logger.log('=== RECALC START (wrapped) ===');
+      Logger.log('=== RECALC START === (inPipeline=' + _LEAVE_IN_PIPELINE_ + ')');
       var result = _origRecalc();
       Logger.log('=== RECALC core done === ' + (result && result.message ? result.message : ''));
-      Logger.log('=== RECALC normalize dates ===');
-      var norm = normalizeAllTblLeaveStartEndDates();
-      Logger.log('=== RECALC END === ' + (norm && norm.message ? norm.message : ''));
-      if (result) {
-        result.normalize = norm;
-        result.message = (result.message || '') + ' | ' + (norm.message || '');
+      if (!_LEAVE_IN_PIPELINE_) {
+        Logger.log('=== RECALC standalone → batch normalize ===');
+        var norm = normalizeAllTblLeaveStartEndDates();
+        if (result) {
+          result.normalize = norm;
+          result.message = (result.message || '') + ' | ' + (norm.message || '');
+        }
+        Logger.log('=== RECALC END === ' + (norm && norm.message ? norm.message : ''));
+      } else {
+        Logger.log('=== RECALC END === skip normalize (pipeline will do it once)');
       }
       return result;
     };
     recalculateAllLeaveUtilized = function () {
       return calculateLeaveUtilized();
     };
-    Logger.log('LeaveDateWriteFix: calculateLeaveUtilized wrapped with noon normalize');
+    Logger.log('LeaveDateWriteFix: recalculate normalizes only when standalone');
   }
 })();
