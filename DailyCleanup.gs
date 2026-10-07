@@ -1,4 +1,4 @@
-/** Daily leave cleanup — dedupe by Emp|LeaveDate|LeaveType only. */
+/** Daily leave cleanup — dedupe by Emp|LeaveDate only (one leave day per employee). */
 
 function runLeaveCleanupPipeline() {
   Logger.log('=== DAILY PIPELINE START ===');
@@ -18,7 +18,7 @@ function runLeaveCleanupPipeline() {
 }
 
 function exactDedupeDailyLeaveInPlace_() {
-  Logger.log('exactDedupeDailyLeaveInPlace_: begin');
+  Logger.log('exactDedupeDailyLeaveInPlace_: begin (Emp|Date only)');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName('tblLeave');
   if (!sheet) return { success: false, message: 'tblLeave missing' };
@@ -32,7 +32,6 @@ function exactDedupeDailyLeaveInPlace_() {
     .map(function (h) { return String(h || '').trim(); });
   var iEmp = headers.indexOf('Emp ID');
   var iDate = headers.indexOf('Leave Date');
-  var iType = headers.indexOf('Leave Type');
   var data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
 
   var seen = {};
@@ -40,9 +39,8 @@ function exactDedupeDailyLeaveInPlace_() {
   for (var i = 0; i < data.length; i++) {
     var emp = String(data[i][iEmp] || '').trim().toUpperCase();
     var dk = dailyDateKey_(data[i][iDate]);
-    var lt = String(data[i][iType] || '').trim();
     if (!emp || !dk) continue;
-    var fp = dailyFingerprint_(emp, dk, lt);
+    var fp = dailyFingerprint_(emp, dk);
     var sheetRow = i + 2;
     if (seen[fp]) toDelete.push(sheetRow);
     else seen[fp] = sheetRow;
