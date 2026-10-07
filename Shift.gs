@@ -3,13 +3,13 @@
  *  SHIFT SYNC — wide (pivoted) tblShift
  * ============================================================
  *  Layout:
- *    Row 1: Emp ID | yyyy-MM-dd | yyyy-MM-dd | ...  (TEXT, never Date serials)
- *    Row 2+: empId | shift      | shift      | ...
+ *    Row 1: Emp ID | 2026-07-01 | 2026-07-02 | ...   (ISO date TEXT only)
+ *    Row 2+: empId | G          | O          | ...
  *
- *  Date handling:
- *    CSV dates are ISO (2026-07-01T00:00:00) → stored as "2026-07-01" text.
- *    Headers are written as plain text (format @) so Sheets cannot
- *    reinterpret them as MM/DD vs DD/MM locale dates.
+ *  CRITICAL: Date keys stay as ISO text (yyyy-MM-dd) end-to-end.
+ *  Never construct JavaScript Date for shift keys — no locale
+ *  day/month swap, no timezone shift. CSV "2026-07-01T00:00:00"
+ *  → key "2026-07-01" by string slice only. Pivot and write back.
  * ============================================================
  */
 
@@ -23,8 +23,8 @@ function processShiftFiles() {
 
 function syncShiftsFromCsv() {
   var started = new Date().getTime();
-  var cutoffStr = ymd_(shiftRetentionCutoff_());
-  Logger.log('=== processShiftFiles / syncShiftsFromCsv START === cutoff=' + cutoffStr);
+  var cutoffStr = isoTodayCutoff_();
+  Logger.log('=== processShiftFiles START === cutoff(ISO)=' + cutoffStr);
 
   var csv = loadEmployeeShiftCsvWide_();
   if (!csv.success) {
@@ -32,7 +32,8 @@ function syncShiftsFromCsv() {
     return { success: false, message: csv.message };
   }
   Logger.log('CSV: ' + csv.rowCount + ' cells, emps ' + csv.empCount +
-    ', dates ' + csv.minDate + ' → ' + csv.maxDate +
+    ', ISO dates ' + csv.minDate + ' → ' + csv.maxDate +
+    ' (sample keys: ' + (csv.sampleKeys || []).join(', ') + ')' +
     ' (' + (new Date().getTime() - started) + ' ms)');
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -67,7 +68,7 @@ function syncShiftsFromCsv() {
     var ds = Object.keys(m);
     for (var d = 0; d < ds.length; d++) {
       var dStr = ds[d];
-      if (!isYmd_(dStr)) continue;
+      if (!isIsoDateKey_(dStr)) continue;
       if (dStr < cutoffStr) continue;
       var code = m[dStr];
       if (!code) continue;
@@ -100,14 +101,12 @@ function syncShiftsFromCsv() {
   }
 
   Logger.log('Wide matrix: ' + activeEmps.length + ' emps × ' + dateList.length +
-    ' dates (pruned empty emps: ' + prunedEmps + ') sample headers: ' +
-    dateList.slice(0, 5).join(', ') +
-    (dateList.length > 5 ? '…' : '') +
-    ' (' + (new Date().getTime() - started) + ' ms)');
+    ' ISO date cols. First/last: ' +
+    (dateList.length ? dateList[0] + ' → ' + dateList[dateList.length - 1] : '(none)') +
+    '. Sample: ' + dateList.slice(0, 6).join(', '));
 
   sheet = resetTblShiftSheet_(ss, sheet);
-  writeWideChunked_(sheet, out);
-  forceShiftHeaderTextFormat_(sheet, dateList.length);
+  writeWideAsIsoText_(sheet, out);
   SpreadsheetApp.flush();
 
   try {
@@ -117,7 +116,7 @@ function syncShiftsFromCsv() {
 
   var ms = new Date().getTime() - started;
   var msg = 'Shift wide-sync OK in ' + ms + ' ms. ' +
-    activeEmps.length + ' employees, ' + dateList.length + ' date columns' +
+    activeEmps.length + ' employees, ' + dateList.length + ' ISO date columns' +
     (dateList.length ? ' (' + dateList[0] + ' → ' + dateList[dateList.length - 1] + ')' : '') +
     '. CSV range ' + csv.minDate + '→' + csv.maxDate + ' replaced. ' +
     'Cutoff ' + cutoffStr + '. Empty emp rows pruned: ' + prunedEmps + '.';
@@ -137,6 +136,43 @@ function syncShiftsFromCsv() {
   };
 }
 
+function isIsoDateKey_(s) {
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+/**
+ * Extract yyyy-MM-dd by STRING only.
+ * "2026-07-01T00:00:00" → "2026-07-01". Never new Date() for CSV keys.
+ */
+function isoDateKeyFromText_(val) {
+  if (val === null || val === undefined || val === '') return null;
+
+  if (Object.prototype.toString.call(val) === '[object Date]' && !isNaN(val.getTime())) {
+    try {
+      return Utilities.formatDate(val, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    } catch (e) {
+      var y = val.getFullYear();
+      var m = val.getMonth() + 1;
+      var day = val.getDate();
+      return y + '-' + ('0' + m).slice(-2) + '-' + ('0' + day).slice(-2);
+    }
+  }
+
+  var s = String(val).trim();
+  if (s.charAt(0) === "'") s = s.substring(1);
+
+  var m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  return null;
+}
+
+function isoTodayCutoff_() {
+  var now = new Date();
+  var y = now.getFullYear() - 1;
+  var m = now.getMonth() + 1;
+  return y + '-' + ('0' + m).slice(-2) + '-01';
+}
+
 function resetTblShiftSheet_(ss, sheet) {
   var name = 'tblShift';
   var idx = sheet.getIndex();
@@ -146,7 +182,7 @@ function resetTblShiftSheet_(ss, sheet) {
     Logger.log('tblShift recreated at index ' + idx);
     return fresh;
   } catch (err) {
-    Logger.log('deleteSheet failed (' + err.message + '); trimming rows instead');
+    Logger.log('deleteSheet failed (' + err.message + '); trimming instead');
     sheet.clearContents();
     sheet.clearFormats();
     var maxRows = sheet.getMaxRows();
@@ -157,120 +193,71 @@ function resetTblShiftSheet_(ss, sheet) {
   }
 }
 
-function shiftRetentionCutoff_() {
-  var now = new Date();
-  return new Date(now.getFullYear() - 1, now.getMonth(), 1);
-}
+function writeWideAsIsoText_(sheet, rows) {
+  if (!rows || !rows.length) return;
+  var cols = rows[0].length;
+  var need = cols - sheet.getMaxColumns();
+  if (need > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), need);
 
-function ymd_(d) {
-  return d.getFullYear() + '-' +
-    ('0' + (d.getMonth() + 1)).slice(-2) + '-' +
-    ('0' + d.getDate()).slice(-2);
-}
+  if (cols > 1) {
+    sheet.getRange(1, 2, 1, cols - 1).setNumberFormat('@');
+  }
 
-function isYmd_(s) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
-}
+  for (var c = 1; c < rows[0].length; c++) {
+    var key = isoDateKeyFromText_(rows[0][c]) || String(rows[0][c] || '');
+    rows[0][c] = key;
+  }
 
-/**
- * Normalize any value to strict yyyy-MM-dd string.
- * NEVER use ambiguous slash parsing via new Date(s) (MM/DD vs DD/MM).
- */
-function ymdFromAny_(val) {
-  if (val === null || val === undefined || val === '') return null;
-
-  if (val instanceof Date && !isNaN(val.getTime())) {
-    var d = new Date(val.getTime());
-    if (d.getHours() >= 20) {
-      d = new Date(d.getTime() + 2 * 60 * 60 * 1000);
+  var chunk = SHIFT_WRITE_CHUNK_ROWS;
+  for (var i = 0; i < rows.length; i += chunk) {
+    var part = rows.slice(i, i + chunk);
+    sheet.getRange(i + 1, 1, part.length, cols).setValues(part);
+    if (i === 0 && cols > 1) {
+      sheet.getRange(1, 2, 1, cols - 1).setNumberFormat('@');
     }
-    return ymd_(d);
+    if (i + chunk < rows.length) SpreadsheetApp.flush();
   }
 
-  var s = String(val).trim();
-
-  // ISO: 2026-07-01 or 2026-07-01T00:00:00
-  var iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) {
-    return iso[1] + '-' + iso[2] + '-' + iso[3];
-  }
-
-  var months = {
-    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
-    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
-  };
-  var mon = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{2,4})$/);
-  if (mon && months[mon[2].toLowerCase()]) {
-    var y = Number(mon[3]);
-    if (y < 100) y = y >= 70 ? 1900 + y : 2000 + y;
-    return y + '-' +
-      ('0' + months[mon[2].toLowerCase()]).slice(-2) + '-' +
-      ('0' + Number(mon[1])).slice(-2);
-  }
-
-  // DD/MM/YYYY (Nigeria) — not MM/DD
-  var dmy = s.match(/^(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{2,4})$/);
-  if (dmy) {
-    var day = Number(dmy[1]);
-    var month = Number(dmy[2]);
-    var year = Number(dmy[3]);
-    if (year < 100) year = year >= 70 ? 1900 + year : 2000 + year;
-    if (month > 12 && day <= 12) {
-      var tmp = day; day = month; month = tmp;
-    }
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-    return year + '-' +
-      ('0' + month).slice(-2) + '-' +
-      ('0' + day).slice(-2);
-  }
-
-  Logger.log('ymdFromAny_: unparseable date "' + s + '"');
-  return null;
-}
-
-function forceShiftHeaderTextFormat_(sheet, numDateCols) {
-  if (numDateCols < 1) return;
   try {
-    sheet.getRange(1, 2, 1, numDateCols).setNumberFormat('@');
-    var hdr = sheet.getRange(1, 2, 1, numDateCols).getValues()[0];
-    var rowVals = [hdr.map(function (h) {
-      var y = ymdFromAny_(h);
-      return y || String(h || '');
-    })];
-    sheet.getRange(1, 2, 1, numDateCols).setNumberFormat('@');
-    sheet.getRange(1, 2, 1, numDateCols).setValues(rowVals);
-    Logger.log('forceShiftHeaderTextFormat_: ' + numDateCols + ' date headers as text');
-  } catch (e) {
-    Logger.log('forceShiftHeaderTextFormat_ error: ' + e.message);
-  }
+    var shown = sheet.getRange(1, 2, 1, Math.min(6, cols - 1)).getDisplayValues()[0];
+    Logger.log('Header display sample after write: ' + shown.join(' | '));
+    var raw = sheet.getRange(1, 2, 1, Math.min(6, cols - 1)).getValues()[0];
+    Logger.log('Header raw typeof sample: ' + raw.map(function (v) {
+      return (v instanceof Date ? 'Date(' + isoDateKeyFromText_(v) + ')' : typeof v + ':' + v);
+    }).join(', '));
+  } catch (e) {}
 }
 
 function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
   var grid = {};
-  var data = sheet.getDataRange().getValues();
-  if (data.length < 2) return grid;
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol < 2) return grid;
+
+  var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var display = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
 
   var h0 = String(data[0][0] || '').trim().toLowerCase();
-  var h1 = data[0][1];
-  var h1Str = ymdFromAny_(h1) || String(h1 || '').trim();
-
-  var isWide = isYmd_(h1Str) ||
-    (h0.indexOf('emp') === 0 && String(h1).toLowerCase() !== 'date');
+  var h1Key = isoDateKeyFromText_(display[1]) || isoDateKeyFromText_(data[0][1]);
+  var isWide = isIsoDateKey_(h1Key) ||
+    (h0.indexOf('emp') === 0 && String(display[1] || data[0][1] || '').toLowerCase() !== 'date');
 
   if (isWide) {
     var dateHeaders = [];
-    for (var c = 1; c < data[0].length; c++) {
-      dateHeaders.push(ymdFromAny_(data[0][c]));
+    for (var c = 1; c < lastCol; c++) {
+      var key = isoDateKeyFromText_(display[c]) || isoDateKeyFromText_(data[0][c]);
+      dateHeaders.push(key);
     }
-    Logger.log('loadExistingShiftGrid_ wide: ' + dateHeaders.filter(Boolean).length +
-      ' date cols, sample: ' + dateHeaders.filter(Boolean).slice(0, 3).join(', '));
+    Logger.log('loadExistingShiftGrid_ wide headers sample: ' +
+      dateHeaders.filter(Boolean).slice(0, 5).join(', '));
+
     for (var r = 1; r < data.length; r++) {
       var empId = String(data[r][0] || '').trim().toUpperCase();
       if (!empId) continue;
       if (!grid[empId]) grid[empId] = {};
       for (var c2 = 1; c2 < data[r].length; c2++) {
         var dStr = dateHeaders[c2 - 1];
-        if (!dStr || !isYmd_(dStr)) continue;
+        if (!dStr || !isIsoDateKey_(dStr)) continue;
         if (dStr < cutoffStr) continue;
         if (csvMin && csvMax && dStr >= csvMin && dStr <= csvMax) continue;
         var sh = String(data[r][c2] || '').trim().toUpperCase();
@@ -283,7 +270,7 @@ function loadExistingShiftGrid_(sheet, cutoffStr, csvMin, csvMax) {
   for (var i = 1; i < data.length; i++) {
     var emp = String(data[i][0] || '').trim().toUpperCase();
     if (!emp) continue;
-    var dStr2 = ymdFromAny_(data[i][1]);
+    var dStr2 = isoDateKeyFromText_(data[i][1]);
     if (!dStr2) continue;
     if (dStr2 < cutoffStr) continue;
     if (csvMin && csvMax && dStr2 >= csvMin && dStr2 <= csvMax) continue;
@@ -348,12 +335,13 @@ function loadEmployeeShiftCsvWide_() {
       return { success: false, message: 'CSV columns missing. Found: ' + headers.join(', ') };
     }
 
-    var cutoffStr = ymd_(shiftRetentionCutoff_());
+    var cutoffStr = isoTodayCutoff_();
     var byEmp = {};
     var minDate = null;
     var maxDate = null;
     var rowCount = 0;
     var badDates = 0;
+    var sampleKeys = [];
 
     for (var r = 1; r < parsed.length; r++) {
       var row = parsed[r];
@@ -362,10 +350,10 @@ function loadEmployeeShiftCsvWide_() {
       if (!empId) continue;
 
       var rawD = String(row[iDate] || '').trim();
-      var dStr = ymdFromAny_(rawD);
+      var dStr = isoDateKeyFromText_(rawD);
       if (!dStr) {
         badDates++;
-        if (badDates <= 5) Logger.log('Bad shift date: "' + rawD + '" emp ' + empId);
+        if (badDates <= 5) Logger.log('Bad shift date (not ISO): "' + rawD + '" emp ' + empId);
         continue;
       }
       if (dStr < cutoffStr) continue;
@@ -378,10 +366,12 @@ function loadEmployeeShiftCsvWide_() {
       rowCount++;
       if (!minDate || dStr < minDate) minDate = dStr;
       if (!maxDate || dStr > maxDate) maxDate = dStr;
+      if (sampleKeys.length < 8 && sampleKeys.indexOf(dStr) < 0) sampleKeys.push(dStr);
     }
 
-    Logger.log('CSV parse: ' + rowCount + ' cells, badDates=' + badDates +
-      ', range ' + minDate + ' → ' + maxDate);
+    sampleKeys.sort();
+    Logger.log('CSV parse (string ISO keys): ' + rowCount + ' cells, badDates=' + badDates +
+      ', range ' + minDate + ' → ' + maxDate + ', samples ' + sampleKeys.join(', '));
 
     return {
       success: true,
@@ -390,35 +380,11 @@ function loadEmployeeShiftCsvWide_() {
       maxDate: maxDate,
       rowCount: rowCount,
       empCount: Object.keys(byEmp).length,
-      badDates: badDates
+      badDates: badDates,
+      sampleKeys: sampleKeys
     };
   } catch (err) {
     return { success: false, message: 'CSV error: ' + err.message };
-  }
-}
-
-function writeWideChunked_(sheet, rows) {
-  if (!rows || !rows.length) return;
-  var cols = rows[0].length;
-  var need = cols - sheet.getMaxColumns();
-  if (need > 0) sheet.insertColumnsAfter(sheet.getMaxColumns(), need);
-
-  if (cols > 1) {
-    try {
-      sheet.getRange(1, 2, 1, cols - 1).setNumberFormat('@');
-    } catch (e) {}
-  }
-
-  var chunk = SHIFT_WRITE_CHUNK_ROWS;
-  for (var i = 0; i < rows.length; i += chunk) {
-    var part = rows.slice(i, i + chunk);
-    if (i === 0 && part.length > 0) {
-      for (var c = 1; c < part[0].length; c++) {
-        part[0][c] = String(part[0][c] || '');
-      }
-    }
-    sheet.getRange(i + 1, 1, part.length, cols).setValues(part);
-    if (i + chunk < rows.length) SpreadsheetApp.flush();
   }
 }
 
