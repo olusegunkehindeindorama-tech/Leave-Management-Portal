@@ -1,27 +1,32 @@
-# Daily leave model — deploy steps
+# Daily leave model — what to keep / delete
 
-1. **Backup** the Google Spreadsheet.
-2. Add scripts in this **load order**:
-   - DateUtils.gs
-   - Entitlement and Utilization.gs (policies / master load)
-   - **DailyLeaveModel.gs**
-   - **DailyEntitlement.gs** (overrides `calculateLeaveUtilized`)
-   - **DailyCleanup.gs**
-   - **DailyImportBridge.gs**
-   - Shift.gs, imports, Code.gs, Index.html
-3. Run once:
-   ```javascript
-   migrateTblLeaveToDaily()
-   ```
-4. Run:
-   ```javascript
-   recalculateAllLeaveUtilized()
-   ```
-5. Disable/remove obsolete base64 files: `IndexB64P*`, `IndexHtmlP*`, `IndexHtmlLoader.gs`
-6. After migration, do **not** run old range-based Leave Cleanup overlap logic.
+## KEEP in Apps Script project
+| File | Role |
+|------|------|
+| DateUtils.gs | Noon / WAT date helpers |
+| DailyLeaveModel.gs | Schema, migrate, expand range→days |
+| DailyImportBridge.gs | importRangeLeavesAsDaily_, UI submit helper |
+| **DailyCleanup.gs** | **Only** cleanup pipeline + schedule |
+| **zz_DailyRecalc.gs** | **Only** recalculate util + entitlement (loads last) |
+| Entitlement and Utilization.gs | Policies, multipliers, master loaders |
+| Shift.gs, imports, Code.gs, UiApi.gs, Index.html, Cache.gs, EmployeeSync.gs, Leave balance.gs | App |
 
-## Expected result for a 3–7 Apr leave
-Five rows, same Entry Code, Leave Date = each day, Leave Utilized from shift multipliers, Entitlement Year from carry-forward rules.
+## DELETE from Apps Script project (must remove)
+| File | Why |
+|------|-----|
+| **Leave Cleanup.gs** | Old range overlap/dedupe — this is what was still running your “recalc” |
+| LeaveDateWriteFix.gs | Superseded |
+| CarryForwardFix.gs | Superseded by zz_DailyRecalc |
+| ImportDateBridge.gs | Range Start/End bridge |
+| IndexB64P*, IndexHtmlP*, IndexHtmlLoader.gs | Base64 UI |
+| DiagnoseTblLeave.gs | Range diagnostic |
+
+## Run only these
+```javascript
+migrateTblLeaveToDaily()       // once
+recalculateAllLeaveUtilized()  // must log: zz_DailyRecalc or DAILY RECALC START
+runLeaveCleanupPipeline()      // daily dedupe + recalc
+```
 
 ## Dedup key
-`Emp ID | Leave Date | Leave Type` — one day of a leave type per employee.
+`Emp ID | Leave Date` only — one leave row per employee per calendar day.
