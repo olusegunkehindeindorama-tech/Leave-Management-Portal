@@ -1,9 +1,7 @@
 /**
- * zz_DailyRecalc.gs — MUST load after Entitlement and Utilization.gs
- * (filename starts with zz so Apps Script keeps these overrides last).
- *
- * Fixes: old calculateLeaveUtilized looked for Start/End and never wrote
- * Leave Utilized on the daily schema → migration fractions (0.045) stayed.
+ * zz_DailyRecalc.gs — loads last; daily util + entitlement year.
+ * Carry-forward: deadline day is INCLUSIVE (last allowable prev-year day).
+ * Leave Date is noon; deadline is midnight — compare calendar days only.
  */
 
 function calculateLeaveUtilizedDaily_() {
@@ -38,7 +36,7 @@ function calculateLeaveUtilizedDaily_() {
   var iUtil = headers.indexOf('Leave Utilized');
   var iYear = headers.indexOf('Entitlement Year');
   if (iEmp < 0 || iDate < 0 || iUtil < 0 || iYear < 0) {
-    return { success: false, message: 'Missing required daily columns (need Leave Date, not only Start/End)' };
+    return { success: false, message: 'Missing required daily columns (need Leave Date)' };
   }
 
   var n = lastRow - 1;
@@ -129,13 +127,19 @@ function calculateLeaveUtilizedDaily_() {
 
     if (usesAnnual && meta.deadline) {
       var deadline = carryDeadlineForYear_(meta.deadline, calYear);
-      if (deadline && it.dateObj.getTime() <= deadline.getTime()) {
-        var rem = getPrev_(it.emp, calYear);
-        if (rem > 0) {
-          year = calYear - 1;
-          if (util > 0) setPrev_(it.emp, calYear, rem - util);
-        } else {
-          year = calYear;
+      // Calendar-day compare: cutoff day is INCLUSIVE (last day for prev-year balance).
+      // Leave Date is stored at noon; deadline is midnight — do not compare raw getTime().
+      if (deadline) {
+        var leaveDay = new Date(it.dateObj.getFullYear(), it.dateObj.getMonth(), it.dateObj.getDate());
+        var deadlineDay = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate());
+        if (leaveDay.getTime() <= deadlineDay.getTime()) {
+          var rem = getPrev_(it.emp, calYear);
+          if (rem > 0) {
+            year = calYear - 1;
+            if (util > 0) setPrev_(it.emp, calYear, rem - util);
+          } else {
+            year = calYear;
+          }
         }
       }
     }
@@ -196,7 +200,6 @@ function loadWideShiftMap_() {
   return map;
 }
 
-/** These win over Entitlement and Utilization.gs because zz_ loads last. */
 function calculateLeaveUtilized() {
   Logger.log('zz_DailyRecalc: calculateLeaveUtilized → daily');
   return calculateLeaveUtilizedDaily_();
